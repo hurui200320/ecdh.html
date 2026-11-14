@@ -29,9 +29,9 @@ Friends agree out of band to exchange encrypted text over whatever untrusted cha
 
 **Your security rests on three core assumptions:**
 
-1. **The code you run is authentic.** If the server hosting this page is compromised and a backdoor is planted, this system cannot protect you. (Saving a local copy of `index.html` and `crypto.js` in advance avoids this risk.)
+1. **The code you run is authentic.** If the server hosting this page is compromised and a backdoor is planted, this system cannot protect you. (Downloading a clean local copy of `index.html` and `crypto.js` from [this GitHub repository](https://github.com/hurui200320/ecdh.html) in advance avoids this risk.)
 2. **Public keys are verified out of band.** If an attacker substitutes a fake public key during setup (a man-in-the-middle attack), the cryptography alone cannot tell you that you are talking to an impostor. You must verify that the public key actually belongs to your friend.
-3. **Your device itself is not compromised.** If spyware or a keylogger is running on your phone or computer while you type your passphrase or read messages, browser-side encryption cannot protect you.
+3. **Your device and input path are not compromised.** If spyware, a keylogger, a cloud-connected third-party keyboard (IME), or a background clipboard monitor is running on your phone or computer while you type your passphrase or read messages, browser-side encryption cannot protect you.
 
 ### When to use this tool (and when NOT to)
 
@@ -72,10 +72,12 @@ Friends agree out of band to exchange encrypted text over whatever untrusted cha
 | **Forward secrecy against later key compromise** | Messages are encrypted to a static recipient public key (ECIES). Stateful ratchets (like Signal's Double Ratchet) are far too complex and fragile for a stateless copy-paste web page. Protect your key with a strong passphrase, keep backups limited, and **rotate your keys periodically**. |
 | **Offline brute-force of a stolen key backup** | Offline attackers have no rate limit. PBKDF2 (800,000 iterations) slows down guessing, but **passphrase strength is your real defense**. Use at least 4 random words, minimize where your backup file is stored, and **rotate keys periodically**. |
 | **Replay or reordering of old messages** | An attacker on the channel can re-send a previously captured message. Humans already have conversational context, whereas unauthenticated timestamps or nonces add complexity without real security. |
-| **Traffic analysis** (who is talking, when, and how much) | Even when encoded as archaic CJK characters (base4096) to bypass keyword filters, ciphertexts are still recognizable as encoded blocks. True steganography is a separate problem. |
+| **Traffic analysis and exact plaintext length leakage** | Even when encoded as archaic CJK characters (base4096) to bypass keyword filters, ciphertexts are still recognizable as encoded blocks. In addition, **messages are not padded before encryption** (the binary envelope is always `61 + UTF-8 byte length of plaintext` bytes), so an observer can tell the exact byte length of the plaintext (for example, distinguishing `"no"` from `"yes"`). When sending short or predictable replies, manually add filler text or vary your phrasing. |
+| **Plaintext metadata at rest (`localStorage` and contact exports)** | While your private scalar is passphrase-encrypted, **your own public key (`ecdh.key.v1.pub`), your saved contacts' names and public keys (`ecdh.contacts.v1`), and the last selected contact (`ecdh.lastcontact.v1`) are stored in plaintext** so the UI can display identities and fingerprints without prompting for your passphrase on startup. Anyone inspecting your device's browser storage can see your contact list and link your device to public keys seen on the channel. Use non-identifying nicknames if needed, and check **Also wipe all saved contacts** in the Danger zone when clearing a device. |
+| **Cloud keyboards (IMEs) and clipboard managers** | Many mobile and desktop input methods (especially cloud-connected CJK IMEs) upload typed phrases to remote servers for predictive text. Likewise, copying decrypted plaintext or passphrases exposes them to OS clipboard history, cloud clipboard sync (such as Universal Clipboard or Windows Cloud Clipboard), and background apps that read the clipboard on focus. Browser crypto cannot protect data before it enters or after it leaves the page: **use your OS's built-in offline keyboard**, and **read decrypted messages on screen rather than copying plaintext to the clipboard**. |
 | **Endpoint compromise while using the tool** | A keylogger or screen capture tool defeats any passphrase. Passphrase wrapping only protects keys while at rest. |
 | **Forgotten passphrase** | By design, there is no key escrow or password reset. Losing your passphrase means permanently losing your key and all messages encrypted to it. Store your passphrase somewhere durable (such as a password manager or on paper). |
-| **Automated multi-device sync or push notifications** | Manual copy-paste is simple, portable, and hard to break. To use the same identity on another device, export and import the encrypted backup JSON. |
+| **Automated multi-device sync or push notifications** | Manual copy-paste is simple, portable, and hard to break. To move to another device, export and import your encrypted key backup JSON (and optionally your contacts JSON). |
 
 ---
 
@@ -95,7 +97,7 @@ Friends agree out of band to exchange encrypted text over whatever untrusted cha
 ### Deployment notes
 
 - **HTTPS or `localhost` is required when serving over a network.** Browsers only expose Web Crypto (`crypto.subtle`) in secure contexts. Opening the site over plain `http://` on a LAN IP will disable Web Crypto (the page will display a banner explaining why). Put it behind a TLS reverse proxy or open it on `localhost`.
-- **Local `file://` copies work offline.** Browsers treat `file://` as a secure context, so saving `index.html` and `crypto.js` into the same folder on a USB drive or local disk gives you a fully functional offline copy without any web server.
+- **Local `file://` copies work offline.** Browsers treat `file://` as a secure context, so downloading raw `index.html` and `crypto.js` from [this GitHub repository](https://github.com/hurui200320/ecdh.html) into the same folder on a USB drive or local disk gives you a fully functional offline copy without any web server. (Do **not** use the browser's *Save Page As* menu while using the app — see *Initial setup* below.)
 - **Browser requirements:** Any modern evergreen browser with X25519 support in Web Crypto (Chrome/Edge 133+, Firefox 129+, Safari 17+). The page checks for support on startup and displays a clear warning if a required API is missing.
 - **Updating a hosted deployment:** If you edit any file, increment the `CACHE` version string in `sw.js` so returning browsers pick up the new assets. After deploying over HTTPS, load the page once, switch to offline mode, and reload to confirm the service worker serves the cached app shell.
 - **iOS Safari caveat:** Safari may clear PWA storage after roughly a week of inactivity — always export and keep a copy of your backup JSON.
@@ -117,10 +119,11 @@ node tests/crypto.test.js
 
 #### 1. Initial setup (do this on a calm day)
 
-1. **Save a local copy:** Alongside using a hosted URL, save `index.html` and `crypto.js` in the same folder on your devices. Optionally write down their SHA-256 hashes on paper next to your contacts' fingerprints.
-2. **Generate your keypair:** Choose a **strong passphrase** (at least 4 random words).
-3. **Export your backup JSON:** Save the exported JSON somewhere durable (email it to yourself, store it on a USB stick, or attach it to a password manager). Because the private key inside is encrypted, its safety matches the strength of your passphrase.
-4. **Exchange and verify keys:** Share public keys with your friends, complete the voice verification ceremony below, and save each friend as a named contact.
+1. **Download a clean local copy:** Alongside using a hosted URL, download the raw `index.html` and `crypto.js` files from [this GitHub repository](https://github.com/hurui200320/ecdh.html) (or download the repository ZIP) and keep them in the same folder on your devices. Optionally write down their SHA-256 hashes on paper next to your contacts' fingerprints.
+   > **Avoid "Save Page As" (`Ctrl+S` / `Cmd+S`) in your browser:** *Webpage, Complete* rewrites the `<script src="crypto.js">` path into a subfolder and serializes the **live DOM state** into the saved HTML file (which can accidentally bake your public key, saved contacts, or even currently displayed plaintext right into the file on disk), while *Webpage, HTML Only* omits `crypto.js` so the page will not work offline.
+2. **Generate your keypair:** Choose a **strong passphrase** (at least 4 random words) using your OS's built-in offline keyboard.
+3. **Export your key backup JSON:** Save the exported JSON (`ecdh-backup-YYYYMMDD.json`) somewhere durable (email it to yourself, store it on a USB stick, or attach it to a password manager). Because the private key inside is encrypted, its safety matches the strength of your passphrase.
+4. **Exchange, verify, and optionally export contacts:** Share public keys with your friends, complete the voice verification ceremony below, and save each friend as a named contact. You can also export your contact list (`ecdh-contacts-YYYYMMDD.json`) from the **Encrypt** tab under **Export / import contacts**. *(Note: unlike the key backup, the contacts JSON is unencrypted plaintext — store it somewhere trusted so an attacker cannot swap a public key inside the file.)*
 5. **Keep your passphrase safe:** If you forget your passphrase, neither your key nor any messages sent to it can ever be recovered.
 
 #### 2. The voice verification ceremony (~10 seconds)
@@ -145,17 +148,20 @@ Pick whichever encoding fits your channel's rules; the receiver's page automatic
 
 #### 4. Receiving a message
 
-Paste the received envelope into the decrypt box → enter your passphrase → read the message. Decrypted plaintext is never saved to storage; copy or screenshot what you need, then clear the screen.
+Paste the received envelope into the decrypt box → enter your passphrase → click **Decrypt** → read the message.
+- **Single-use passphrase entry:** Your private key is unwrapped on demand for that single message and immediately discarded from memory, and the passphrase input is cleared as soon as decryption succeeds. Leaving the browser tab open does not leave an "unlocked session" behind.
+- **Keep plaintext out of the clipboard when possible:** Decrypted plaintext is never saved to storage; read it directly on screen and click **Clear** when done rather than copying it into your system clipboard if you do not need to.
 
 #### 5. Restoring on a new or lost device
 
-Open the Setup tab → choose **Restore from backup** → paste your exported backup JSON and enter your passphrase. Your identity and fingerprint are restored immediately without needing to repeat the voice ceremony.
+1. Open the **Setup** tab → under **Restore from backup**, paste your exported key backup JSON (`ecdh-backup-YYYYMMDD.json`) or select the file, enter your passphrase, and click **Restore key**. Your identity and fingerprint are restored immediately without needing to repeat the voice ceremony for your own key.
+2. Open the **Encrypt** tab → expand **Export / import contacts** → paste or select your exported contacts JSON (`ecdh-contacts-YYYYMMDD.json`) and click **Import contacts**. (Because the contacts JSON is unencrypted, if it was stored somewhere untrusted, check that your contacts' 12-emoji fingerprints have not changed.)
 
 However, if you suspect a lost device might be accessed by someone else, **rotate your key and repeat the ceremony with your contacts**.
 
-#### 6. Key rotation or compromise recovery
+#### 6. Key rotation, compromise recovery, or wiping a device
 
-Wipe your existing key → generate a new identity → **repeat the voice verification ceremony** with your friends so they delete your old contact entry and save the new public key.
+Open the **Setup** tab → expand **Danger zone** → optionally check **Also wipe all saved contacts** if you want to remove `ecdh.contacts.v1` and `ecdh.lastcontact.v1` alongside your key → click **Wipe** twice to confirm. To rotate your identity, generate a new keypair and **repeat the voice verification ceremony** with your friends so they delete your old contact entry and save the new public key.
 
 ---
 
@@ -169,7 +175,8 @@ Wipe your existing key → generate a new identity → **repeat the voice verifi
 | HKDF-SHA-256 between ECDH and AES | Provides clean cryptographic domain separation using standard primitives available in Web Crypto and BouncyCastle. |
 | Self-contained envelope (ephemeral public key + IV + ciphertext) | The recipient needs zero prior state from the sender to decrypt a message. |
 | Mandatory passphrase on stored keys | Ensures private keys never sit in plaintext in `localStorage` or backup files; a wrong passphrase fails cleanly via AES-GCM authentication. |
-| Identical format for `localStorage` and backup files | One data structure and one code path; exported backups are safe to store on untrusted cloud drives assuming a strong passphrase. |
+| Single-use key unwrapping on decrypt | Unwraps the private scalar only for the duration of a single `Decrypt` click, never caches the unlocked key in memory, and immediately clears the passphrase field. |
+| Identical format for `localStorage` and backup files | One data structure and one code path; exported key backups are safe to store on untrusted cloud drives assuming a strong passphrase, while contacts can be exported/imported separately as a `[{"name", "pub"}]` JSON array. |
 | 12-emoji fingerprint (72 bits of SHA-256) | Easy to read aloud over a voice call. A short 4-emoji (24-bit) fingerprint can be brute-forced offline on a laptop in minutes; 72 bits is infeasible to brute-force within this threat model. |
 | Dual envelope encodings: base4096 (CJK) and Z85 | Originally the tool used Base64 (100 bytes → 133 chars). Z85 reduces this to 125 ASCII chars (125 bytes), which is ideal for channels that limit by **byte size**. However, many IMs limit messages by **character count**, counting a 3-byte UTF-8 Chinese character as 1 character — so CJK base4096 packs 100 bytes into ~67 characters while also using archaic characters that avoid keyword filters. Users can choose whichever fits their channel. |
 | No sender signatures, timestamps, or AAD | Keeps the protocol stateless, minimal, and easy to audit or reimplement in an afternoon. |
@@ -295,9 +302,9 @@ Test vector (32-byte all-zero public key):
 - The wrapping key is derived via `PBKDF2-HMAC-SHA256(passphrase, salt, iter)`. Importers honor the `iter` value stored in the JSON record rather than hardcoding 800,000.
 - The `pub` field is mandatory; on import, the decrypted private scalar is multiplied by the base point to verify that it matches `pub`.
 - `localStorage` keys used by the page:
-  - `ecdh.key.v1` — the JSON record above
-  - `ecdh.contacts.v1` — `[{"name": "...", "pub": "<64-char hex>"}]`
-  - `ecdh.lastcontact.v1` — hex public key of the last selected contact
+  - `ecdh.key.v1` — the JSON record above (private scalar encrypted; `pub` in plaintext)
+  - `ecdh.contacts.v1` — `[{"name": "...", "pub": "<64-char hex>"}]` (stored and exported/imported in plaintext; importers also accept `"publicKey"` as an alias for `"pub"`, canonicalizing to `"pub"`)
+  - `ecdh.lastcontact.v1` — hex public key of the last selected contact (stored in plaintext)
 
 #### BouncyCastle / JVM interoperability reference
 
@@ -313,11 +320,11 @@ If you want to build a compatible desktop or Android tool using BouncyCastle / J
 
 #### Implementation and testing notes
 
-- **Cross-implementation test suite (`tests/crypto.test.js`):** Exercises `crypto.js` directly against Node's OpenSSL-backed `crypto` module. It verifies DER prefixes, envelope binary layout, tag dispatch, Z85 and base4096 encoding/decoding, HKDF key derivation, PBKDF2 key wrapping, emoji fingerprints, base4096 sensitive-word exclusion, and rejection of malformed inputs (all-zero shared secrets, tampered ciphertexts, unknown versions/tags, non-canonical tails, wrong passphrases, and mismatched public keys).
-- **Browser end-to-end validation:** Tested in headless Chromium (Playwright) covering HTTP insecure-context warning banners, key generation, contact fingerprint previews, full Unicode encrypt/decrypt round-trips with line-wrapped envelopes, backup/wipe/restore flows, and passphrase changes.
+- **Cross-implementation test suite (`tests/crypto.test.js`):** Exercises `crypto.js` directly against Node's OpenSSL-backed `crypto` module. It verifies DER prefixes, envelope binary layout, tag dispatch, Z85 and base4096 encoding/decoding, HKDF key derivation, PBKDF2 key wrapping, emoji fingerprints, contact-list import validation, base4096 sensitive-word exclusion, and rejection of malformed inputs (all-zero shared secrets, tampered ciphertexts, unknown versions/tags, non-canonical tails, wrong passphrases, and mismatched public keys).
+- **Browser end-to-end validation:** Tested in headless Chromium (Playwright) covering HTTP insecure-context warning banners, key generation, contact fingerprint previews, contact export/import, full Unicode encrypt/decrypt round-trips with line-wrapped envelopes, backup/wipe/restore flows (including optional contact wiping), and passphrase changes.
 - **Browser quirks handled in code:**
   1. *Non-blocking service worker registration:* Startup does not `await` `navigator.serviceWorker.register()`, preventing a slow or stuck service worker registration from delaying UI initialization.
-  2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are normalized to a clear `"zero shared secret"` error.
+  2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are caught and normalized into explicit `"zero shared secret"` error messages.
 
 ---
 

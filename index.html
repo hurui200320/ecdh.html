@@ -89,6 +89,8 @@
     border-radius:6px; padding:1px 5px; }
   #add-contact-det{ margin-top:4px; padding-top:10px; }
   .contact-actions{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
+  label.chk{ display:flex; align-items:center; gap:8px; color:var(--ink); margin:.6rem 0; cursor:pointer; }
+  label.chk input[type=checkbox]{ width:18px; height:18px; margin:0; accent-color:var(--danger); }
 </style>
 </head>
 <body>
@@ -160,7 +162,7 @@
 
     <div class="card">
       <h2>Backup &amp; maintenance</h2>
-      <p class="hint">Export is already passphrase-encrypted — safe to keep in cloud storage or email. Apps that grab the file get noise.</p>
+      <p class="hint">Export is already passphrase-encrypted — safe to keep in cloud storage or email. Apps that grab the file get noise. (To export or import contacts, use the Encrypt tab.)</p>
       <button id="btn-export" class="primary" type="button">Download backup (.json)</button>
       <button id="btn-copy-backup" type="button">Copy backup JSON</button>
       <details>
@@ -177,6 +179,7 @@
       <details>
         <summary>Danger zone</summary>
         <p class="hint">Wiping destroys the private key on this device. Messages encrypted to it become <b>permanently unreadable</b> (unless you restore a backup). Export first.</p>
+        <label class="chk"><input type="checkbox" id="wipe-contacts"> Also wipe all saved contacts</label>
         <button id="btn-wipe" class="danger" type="button">Wipe key from this device</button>
         <div id="wipe-err" class="err" hidden></div>
       </details>
@@ -211,6 +214,17 @@
       <div id="ct-wait" class="hint" hidden>Waiting for a valid public key…</div>
       <button id="btn-add-contact" class="primary" type="button">Add contact</button>
       <div id="ct-err" class="err" hidden></div>
+    </details>
+    <details id="contacts-io-det">
+      <summary>Export / import contacts</summary>
+      <p class="hint">Contacts export as an unencrypted JSON array of <code>{"name", "pub"}</code>. If you restore contacts from an untrusted place, re-verify their 12-emoji fingerprints.</p>
+      <button id="btn-export-contacts" class="primary" type="button">Download contacts (.json)</button>
+      <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
+      <label for="imp-contacts-json">Import contacts (JSON array)</label>
+      <textarea id="imp-contacts-json" rows="4" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
+      <input type="file" id="imp-contacts-file" accept=".json,application/json">
+      <button id="btn-import-contacts" type="button">Import contacts</button>
+      <div id="imp-contacts-err" class="err" hidden></div>
     </details>
   </div>
 
@@ -272,7 +286,9 @@
     <ul>
       <li class="no">Sender authentication — <b>anyone with your public key can send you a decryptable message</b>. Judge senders by the voice ceremony and message context</li>
       <li class="no">Replay — an old but genuine message can be re-sent to you</li>
-      <li class="no">Metadata — blobs are visibly crypto; who talks to whom and when is visible</li>
+      <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
+      <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code></li>
+      <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
       <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
       <li class="no">Forward secrecy against later key theft — history falls if the private key falls</li>
       <li class="no">A forgotten passphrase — the key and all its messages are gone forever</li>
@@ -290,8 +306,9 @@
   <div class="card">
     <h2>Emergency habits</h2>
     <ul>
-      <li>Save this page <b>and</b> <code>crypto.js</code> (same folder) offline before you need it; together they are fully self-contained.</li>
-      <li>Export the passphrase-encrypted backup and keep it somewhere survivable.</li>
+      <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML).</li>
+      <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
+      <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
       <li>Never paste plaintext or the private key into any chat. Only envelopes and public keys.</li>
       <li>If adversaries upgrade to targeted nation-state: stop, use Signal/GPG/in person instead.</li>
     </ul>
@@ -417,7 +434,10 @@ function renderDecryptPre(){
 
 async function renderContacts(){
   const sel = $("#contact-sel");
-  if (CONTACTS.length){
+  const has = CONTACTS.length > 0;
+  $("#btn-export-contacts").disabled = !has;
+  $("#btn-copy-contacts").disabled = !has;
+  if (has){
     const lastPub = localStorage.getItem(LS_LAST);
     let idx = CONTACTS.findIndex(c => c.pub === lastPub);
     if (idx < 0) idx = 0;
@@ -549,27 +569,47 @@ $("#btn-chpass").addEventListener("click", async (e) => {
   if (ok) flash(btn, "Changed ✓");
 });
 
+function wipeBtnLabel(armed){
+  const all = $("#wipe-contacts").checked;
+  if (armed) return all ? "Confirm: wipe key & contacts forever?" : "Confirm: wipe key forever?";
+  return all ? "Wipe key & contacts from this device" : "Wipe key from this device";
+}
+$("#wipe-contacts").addEventListener("change", () => {
+  clearTimeout(WIPE_TIMER);
+  WIPE_ARMED = false;
+  const b = $("#btn-wipe");
+  b.classList.remove("armed");
+  b.textContent = wipeBtnLabel(false);
+});
 $("#btn-wipe").addEventListener("click", async (e) => {
   const b = e.target;
   if (!RECORD) return;
   if (!WIPE_ARMED){
     WIPE_ARMED = true;
     b.classList.add("armed");
-    b.textContent = "Confirm: wipe key forever?";
+    b.textContent = wipeBtnLabel(true);
     clearTimeout(WIPE_TIMER);
     WIPE_TIMER = setTimeout(() => {
       WIPE_ARMED = false; b.classList.remove("armed");
-      b.textContent = "Wipe key from this device";
+      b.textContent = wipeBtnLabel(false);
     }, 6000);
     return;
   }
   clearTimeout(WIPE_TIMER);
   WIPE_ARMED = false;
   b.classList.remove("armed");
-  b.textContent = "Wipe key from this device";
+  const wipeAll = $("#wipe-contacts").checked;
+  $("#wipe-contacts").checked = false;
+  b.textContent = wipeBtnLabel(false);
   try {
     localStorage.removeItem(LS_KEY);
     RECORD = null; OWN_PUB = null;
+    if (wipeAll){
+      localStorage.removeItem(LS_CONTACTS);
+      localStorage.removeItem(LS_LAST);
+      CONTACTS = [];
+      await renderContacts();
+    }
     await renderSetup();
     flash(b, "Wiped ✓");
   } catch (ex){ showErr($("#wipe-err"), ex.message || "Wipe failed."); }
@@ -625,6 +665,44 @@ $("#btn-del-contact").addEventListener("click", async () => {
   CONTACTS.splice(sel.value | 0, 1);
   saveContacts();
   await renderContacts();
+});
+
+$("#btn-export-contacts").addEventListener("click", () => {
+  if (!CONTACTS.length) return;
+  const blob = new Blob([JSON.stringify(CONTACTS)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const d = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  a.href = url; a.download = "ecdh-contacts-" + d + ".json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+});
+$("#btn-copy-contacts").addEventListener("click", (b) => copyText(JSON.stringify(CONTACTS), b.target));
+
+$("#imp-contacts-file").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try { $("#imp-contacts-json").value = await f.text(); } catch { /* ignore */ }
+});
+
+$("#btn-import-contacts").addEventListener("click", async (e) => {
+  const err = $("#imp-contacts-err"); hideErr(err);
+  const btn = e.target;
+  let list;
+  try { list = JSON.parse($("#imp-contacts-json").value); }
+  catch { return showErr(err, "Not valid JSON — paste the exported contacts array or use the file button."); }
+  try {
+    const incoming = contactsFromImport(list);
+    const byPub = new Map(CONTACTS.map(c => [c.pub, c]));
+    for (const c of incoming) byPub.set(c.pub, c);
+    CONTACTS = [...byPub.values()];
+    saveContacts();
+    localStorage.setItem(LS_LAST, incoming[incoming.length - 1].pub);
+    $("#imp-contacts-json").value = "";
+    $("#imp-contacts-file").value = "";
+    await renderContacts();
+    flash(btn, "Imported ✓");
+  } catch (ex){ showErr(err, ex.message || "Could not import contacts."); }
 });
 
 $("#btn-encrypt").addEventListener("click", async (e) => {

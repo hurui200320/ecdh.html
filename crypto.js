@@ -441,6 +441,31 @@ async function recordFromImport(rec, scalar){
   };
 }
 
+/* Contact list import validation: accepts a JSON array of {name, pub} (also
+ * tolerates publicKey as an alias for pub), validates and canonicalizes each
+ * hex public key, defaults blank names to "friend", and deduplicates by pub
+ * (later entries win). */
+function contactsFromImport(list){
+  if (!Array.isArray(list) || !list.length)
+    throw new Error("Expected a non-empty JSON array of contacts.");
+  const byPub = new Map();
+  for (let i = 0; i < list.length; i++){
+    const c = list[i];
+    if (!c || typeof c !== "object")
+      throw new Error("Contact #" + (i + 1) + " is not an object.");
+    const rawPub = typeof c.pub === "string" ? c.pub
+      : (typeof c.publicKey === "string" ? c.publicKey : null);
+    if (!rawPub)
+      throw new Error("Contact #" + (i + 1) + " is missing a 'pub' (hex public key) field.");
+    let pubHex;
+    try { pubHex = pubEnc(pubDec(rawPub)); }
+    catch { throw new Error("Contact #" + (i + 1) + " has an invalid hex public key (expected 64 hex chars)."); }
+    const name = typeof c.name === "string" && c.name.trim() ? c.name.trim() : "friend";
+    byPub.set(pubHex, { name, pub: pubHex });
+  }
+  return [...byPub.values()];
+}
+
 /* ---------- fingerprints: sha256 -> 72 bits -> 12 emoji ---------- */
 const EMOJI = ["🍎","🍌","🐻","🐝","🚲","🐦","⛵","🎂","🐱","🌵","🐊","🌙","☕","🎲","🐬","🥚",
   "🐘","👀","🦊","🐸","🍇","🎸","🐹","🎩","🏠","🧊","🧥","🪁","🍋","🦁","🥭","🎵",
@@ -464,5 +489,5 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
-    unwrapScalar, recordFromImport, fpOf };
+    unwrapScalar, recordFromImport, contactsFromImport, fpOf };
 }

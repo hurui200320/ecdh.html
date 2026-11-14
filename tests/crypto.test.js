@@ -31,7 +31,7 @@ const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, 
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
-        wrapScalar, unwrapScalar, recordFromImport, fpOf } = core;
+        wrapScalar, unwrapScalar, recordFromImport, contactsFromImport, fpOf } = core;
 
 /* helper: build a wrapper record the way the app does */
 async function makeRecord(priv, pub, pass, iter){
@@ -280,6 +280,22 @@ async function makeRecord(priv, pub, pass, iter){
   oddIter.iter = 1500.7;   // hand-edited record: importer must use/store the integer actually used
   const canonOdd = await recordFromImport(oddIter, await unwrapScalar("odd", oddIter));
   assert.strictEqual(canonOdd.iter, 1500, "iter normalized to the integer actually used");
+
+  /* 8. contact list import validation: {name, pub} / {name, publicKey} */
+  const cList = contactsFromImport([
+    { name: "  Alice ", pub: pubEnc(pub).toUpperCase() },
+    { name: "", publicKey: pubEnc(other.pub) },
+    { name: "Alice Renamed", pub: pubEnc(pub) },   // duplicate pub updates in place
+  ]);
+  assert.deepStrictEqual(cList, [
+    { name: "Alice Renamed", pub: pubEnc(pub) },
+    { name: "friend", pub: pubEnc(other.pub) },
+  ], "contactsFromImport canonicalizes hex, trims names, defaults empty name, and deduplicates by pub");
+  assert.throws(() => contactsFromImport([]), /non-empty/i);
+  assert.throws(() => contactsFromImport({}), /non-empty/i);
+  assert.throws(() => contactsFromImport([null]), /not an object/i);
+  assert.throws(() => contactsFromImport([{ name: "Bob" }]), /missing a 'pub'/i);
+  assert.throws(() => contactsFromImport([{ name: "Bob", pub: "not-hex" }]), /invalid hex/i);
 
   console.log("ALL CRYPTO-CORE CROSS-CHECKS PASSED");
 })().catch((err) => { console.error("FAIL:", err && err.message ? err.message : err); process.exit(1); });
