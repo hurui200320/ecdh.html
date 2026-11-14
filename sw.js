@@ -3,7 +3,7 @@
 // Bump CACHE version whenever any file below (or index.html) changes
 // (node tests/crypto.test.js verifies the 12-hex asset digest below).
 const CACHE_PREFIX = "ecdh-html-";
-const CACHE = CACHE_PREFIX + "v1-2fe7d39dcaed";
+const CACHE = CACHE_PREFIX + "v1-841d5a7287be";
 const ASSETS = ["./", "./index.html", "./crypto.js", "./manifest.json", "./icon.svg"];
 const ASSET_URLS = new Set(ASSETS.map((u) => new URL(u, self.location).href));
 

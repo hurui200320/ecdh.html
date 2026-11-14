@@ -619,6 +619,7 @@
         <li class="ok">Key-substitution attacks — if you do the fingerprint ceremony</li>
         <li class="ok">Private key at rest — device storage and backup files are passphrase-wrapped (PBKDF2-SHA-256 800k + AES-GCM)</li>
         <li class="ok">Availability — static files, works offline, a saved copy runs from <code>file://</code></li>
+        <li class="ok">Long-term interoperability — the protocol spec is byte-exact, so envelopes and backups stay decryptable by any faithful reimplementation</li>
       </ul>
     </div>
   </div>
@@ -629,14 +630,16 @@
     <div class="card-body">
       <ul>
         <li class="no">Sender authentication — <b>anyone with your public key can send you a decryptable message</b>. Judge senders by the voice ceremony and message context</li>
-        <li class="no">Replay — an old but genuine message can be re-sent to you</li>
+        <li class="no">Replay or reordering — old but genuine messages can be re-sent to you</li>
         <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
         <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code> (and in Chrome/Edge, all local <code>file://</code> pages share one <code>localStorage</code> bucket)</li>
         <li class="no">In-app browsers (WebViews), non-standard browsers, &amp; extensions — chat-app WebViews and extensions/userscripts (e.g. Tampermonkey, auto-translate, AI sidebars) can read the page DOM and steal passphrases or plaintext</li>
         <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
         <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
-        <li class="no">Forward secrecy against later key theft — history falls if the private key falls</li>
+        <li class="no">Forward secrecy against later key theft — history falls if the private key falls, so <b>rotate your keys periodically</b></li>
+        <li class="no">Offline brute-force of a stolen key backup — offline attackers have no rate limit; PBKDF2 (800k) only slows them down, so <b>passphrase strength is your real defense</b> (at least 4 random words), keep backup copies few, and minimize where they are stored</li>
         <li class="no">A forgotten passphrase — the key and all its messages are gone forever</li>
+        <li class="no">Automated multi-device sync or push notifications — there are none by design; to move to another device, manually export and re-import your encrypted key backup JSON (and optionally your contacts JSON)</li>
       </ul>
     </div>
   </div>
@@ -649,7 +652,8 @@
         <li>Call each other on a hard-to-tamper channel (voice). Agree: we use this system, for what, around when.</li>
         <li>Each reads the <b>12 emoji (or their English labels)</b> under their own public key; the other checks them against the fingerprint shown for that contact.</li>
         <li>Do it in both directions. 12 emoji ≈ 72 bits — has never been feasible to fake for anyone in scope.</li>
-        <li>Treat unexpected blobs outside agreed windows with suspicion.</li>
+        <li>Treat unexpected blobs outside agreed windows — or from unverified keys — with suspicion; this operational check substitutes for cryptographic sender signatures.</li>
+        <li>Never skip or delegate the fingerprint check. Without it, messages stay confidential against passive eavesdroppers, but you have no guarantee of who sits on the other end.</li>
       </ul>
     </div>
   </div>
@@ -660,7 +664,7 @@
     <div class="card-body">
       <ul>
         <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML). If running from <code>file://</code> in Chrome/Edge, use a dedicated browser profile and never open downloaded <code>.html</code> files in it (or use Firefox or <code>localhost</code>).</li>
-        <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
+        <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable — iOS Safari may clear PWA storage after about a week of inactivity. The contacts JSON is unencrypted plaintext: store it somewhere trusted so nobody can swap a public key inside, and re-check fingerprints after importing it.</li>
         <li>Always open this page in standalone Firefox, Chrome, Edge, or Safari — <b>never</b> inside a chat app's built-in browser/WebView — and disable browser extensions (Tampermonkey, translation plugins, AI sidebars) on this page.</li>
         <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
         <li>Never paste plaintext or the private key into any chat. Only envelopes and public keys.</li>
