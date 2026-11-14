@@ -12,6 +12,8 @@
  *   - PBKDF2-HMAC-SHA256 passphrase wrapper (incl. the production 800k cost)
  *   - SHA-256 fingerprint and the 12-emoji (72-bit, LSB-first) mapping
  *   - import validation: pub required, verified, record canonicalized
+ *   - envelope text layer: tag dispatch (A = base64), IM whitespace
+ *     tolerance, unknown/missing tags rejected
  *   - documented failure paths: zero shared secret, tampering, wrong
  *     version, truncated/garbage input, wrong passphrase, corrupt records
  *
@@ -26,6 +28,7 @@ const nc = require("node:crypto");
 const core = require("../crypto.js");
 
 const { b64enc, b64dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
+        TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
         wrapScalar, unwrapScalar, recordFromImport, fpOf } = core;
 
@@ -66,14 +69,32 @@ async function makeRecord(priv, pub, pass, iter){
 
   /* 2. envelope round-trip + byte-exact layout (0x01 | ephPub[32] | iv[12] | ct+tag) */
   const msg = "hello 你好 😀 ∑≤√ x+1=2 \n\tquotes'\"<&>";
-  const env = await encryptTo(pub, msg);
-  const u = b64dec(env);
+  const env = await encryptTo(pub, TE.encode(msg));   // raw bytes in, raw bytes out
+  const u = env;
   assert.strictEqual(u[0], VER, "version byte");
   assert.strictEqual(u.length, 1 + 32 + 12 + Buffer.byteLength(msg) + 16, "envelope length");
-  assert.strictEqual(await decryptWith(priv, pub, env), msg, "round-trip");
-  assert.strictEqual(await decryptWith(priv, pub, env.replace(/(.{20})/g, "$1\n")), msg,
+  assert.strictEqual(TD.decode(await decryptWith(priv, pub, encodeEnv(env))), msg, "round-trip");
+  assert.strictEqual(
+    TD.decode(await decryptWith(priv, pub, encodeEnv(env).replace(/(.{20})/g, "$1\n"))), msg,
     "IM-style line-wrapped envelope");
-  assert.strictEqual(await decryptWith(priv, pub, await encryptTo(pub, "")), "", "empty plaintext");
+  assert.strictEqual(
+    TD.decode(await decryptWith(priv, pub, encodeEnv(await encryptTo(pub, new Uint8Array(0))))),
+    "", "empty plaintext");
+
+  /* 2b. envelope text layer: TAG || codec(envelope bytes) */
+  const envStr = encodeEnv(env);
+  assert.ok(envStr.startsWith("A") && envStr.slice(1) === b64enc(env),
+    "base64 envelopes are tagged 'A' + standard padded base64");
+  assert.ok(Buffer.from(decodeEnv(envStr)).equals(Buffer.from(env)), "tag round-trip");
+  assert.ok(Buffer.from(decodeEnv("A\n" + b64enc(env))).equals(Buffer.from(env)),
+    "tag may be split from its payload by an IM line-wrap");
+  assert.ok(Buffer.from(decodeEnv(" " + envStr.replace(/(.{20})/g, "$1\n"))).equals(Buffer.from(env)),
+    "leading whitespace + wrapped payload tolerated");
+  assert.throws(() => decodeEnv("a" + b64enc(env)), /tag/i, "tags are case-sensitive");
+  assert.throws(() => decodeEnv("Z" + b64enc(env)), /tag/i, "unknown tag is rejected");
+  assert.throws(() => decodeEnv(""), /empty/i, "empty input is rejected");
+  assert.throws(() => decodeEnv("A!!!"), /base64/i, "bad payload under a valid tag");
+  assert.throws(() => encodeEnv(env, "Z"), /tag/i, "unknown tag on encode");
 
   /* 3. independent OpenSSL decrypt of the envelope (spec recipe) */
   {
@@ -92,16 +113,19 @@ async function makeRecord(priv, pub, pass, iter){
   }
 
   /* 4. failure paths */
-  await assert.rejects(encryptTo(new Uint8Array(32), "x"), /invalid|zero|agreement/i,
+  await assert.rejects(encryptTo(new Uint8Array(32), "x"), /raw bytes|Uint8Array/i,
+    "plaintext must be raw bytes, not a string");
+  await assert.rejects(encryptTo(new Uint8Array(32), new Uint8Array(4)), /invalid|zero|agreement/i,
     "all-zero recipient key must be rejected");
   const tam = u.slice(); tam[47] ^= 0xff;
-  await assert.rejects(decryptWith(priv, pub, b64enc(tam)), /Decryption failed/i);
+  await assert.rejects(decryptWith(priv, pub, encodeEnv(tam)), /Decryption failed/i);
   const wv = u.slice(); wv[0] = 2;
-  await assert.rejects(decryptWith(priv, pub, b64enc(wv)), /version/i);
-  await assert.rejects(decryptWith(priv, pub, "AQID"), /truncated/i);
-  await assert.rejects(decryptWith(priv, pub, "!!!"), /base64/i);
+  await assert.rejects(decryptWith(priv, pub, encodeEnv(wv)), /version/i);
+  await assert.rejects(decryptWith(priv, pub, encodeEnv(u.slice(0, 40))), /truncated/i);
+  await assert.rejects(decryptWith(priv, pub, "AQID"), /truncated/i,
+    "tagless old-style string parses as tag 'A' + short payload, then fails cleanly");
   const other = await genKeyPair();
-  await assert.rejects(decryptWith(other.priv, other.pub, env), /Decryption failed/i,
+  await assert.rejects(decryptWith(other.priv, other.pub, encodeEnv(env)), /Decryption failed/i,
     "wrong recipient key must fail");
 
   /* 5. fingerprint = sha256 -> 72 bits -> 12 emoji, LSB-first */

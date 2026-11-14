@@ -628,7 +628,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   $("#btn-clear-msg").hidden = true;
   btn.disabled = true; btn.textContent = "Encrypting…";
   try {
-    const env = await encryptTo(pub, $("#msg").value);
+    const env = encodeEnv(await encryptTo(pub, TE.encode($("#msg").value)));
     $("#env-out").value = env;
     $("#env-out").hidden = false;
     $("#btn-copy-env").hidden = false;
@@ -668,7 +668,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   $("#btn-clear-plain").hidden = true;
   try {
     const scalar = await unwrapScalar(pass, RECORD);
-    const text = await decryptWith(scalar, OWN_PUB, env);
+    const text = TD.decode(await decryptWith(scalar, OWN_PUB, env));
     $("#plain-out").value = text;
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;

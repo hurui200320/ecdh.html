@@ -4,11 +4,15 @@
  * plain script before the UI code) and tests/crypto.test.js (required
  * directly under Node). No dependencies; everything is Web Crypto.
  *
- * Protocol: envelope = base64(0x01 | ephPub[32] | iv[12] | AESGCM ct||tag)
+ * Protocol: envelope bytes = 0x01 | ephPub[32] | iv[12] | AESGCM ct||tag
+ *           text form      = TAG || codec(envelope bytes); tag A = base64
+ *                            (planned: B = base85, a CJK tag = base4096)
  *           key = HKDF-SHA256(X25519(eph, recip), salt=ephPub||recipPub,
  *                              info="ecdh.html/v1", 32)
  * Public keys are shared as hex (0-9a-f only — IM software can mangle
- * base64's alphabet into emoji); envelopes stay base64.
+ * base64's alphabet into emoji). encryptTo() takes raw plaintext bytes and
+ * returns raw envelope bytes; decryptWith() takes the tagged text form and
+ * returns raw plaintext bytes — the text encoding is a swappable layer.
  * See README.md for the pinned threat model and byte-exact spec.
  * ===================================================================== */
 
@@ -114,7 +118,41 @@ async function x25519Supported(){
 }
 
 /* ---------- messages (envelope v1) ---------- */
-async function encryptTo(recipPubRaw, text){
+/* The text form of an envelope is a one-char encoding tag followed by the
+ * tagged codec's rendering of the envelope bytes. The tag says how the bytes
+ * are spelled and is orthogonal to the version byte (0x01) inside, which says
+ * what they mean. Tags are matched strictly (case-sensitive, no untagged
+ * fallback); all decoders strip whitespace first (IM line-wraps). Table:
+ *   A — base64, standard alphabet with padding (today's default)
+ *   B — base85 (planned)      <CJK char> — base4096 (planned; the tag is
+ *                               chosen from the same visual class so the
+ *                               whole string blends in)
+ * The null prototype keeps pasted first-chars like "constructor" from
+ * resolving to inherited properties. */
+const CODECS = Object.assign(Object.create(null),
+  { A: { name: "base64", enc: b64enc, dec: b64dec } });
+function encodeEnv(u8, tag){
+  tag = tag || "A";
+  const codec = CODECS[tag];
+  if (!codec) throw new Error("Unknown envelope encoding tag: " + JSON.stringify(tag)
+    + " — this page writes: " + Object.keys(CODECS).join(", ") + ".");
+  return tag + codec.enc(u8);
+}
+function decodeEnv(str){
+  const s = str.replace(/\s+/g, "");
+  const codec = CODECS[s[0]];
+  if (!codec){
+    throw new Error(s
+      ? "Unknown envelope encoding tag: " + JSON.stringify(s[0])
+        + " — this page reads: " + Object.keys(CODECS).join(", ") + "."
+      : "Envelope is empty (no encoding tag).");
+  }
+  try { return codec.dec(s.slice(1)); }
+  catch { throw new Error("Envelope is not valid " + codec.name + "."); }
+}
+async function encryptTo(recipPubRaw, plaintext){
+  if (!(plaintext instanceof Uint8Array))
+    throw new Error("Plaintext must be raw bytes (Uint8Array) — encode text with TE.encode().");
   // Ephemeral keypair stays non-extractable inside WebCrypto: the private
   // scalar is never exported, imported, or visible to page script.
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
@@ -132,13 +170,11 @@ async function encryptTo(recipPubRaw, text){
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["encrypt"]);
   const ct = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, tagLength: 128 }, aes, TE.encode(text)));
-  return b64enc(cat(new Uint8Array([VER]), ephPub, iv, ct));
+    { name: "AES-GCM", iv, tagLength: 128 }, aes, plaintext));
+  return cat(new Uint8Array([VER]), ephPub, iv, ct);
 }
 async function decryptWith(privScalar, ownPubRaw, envStr){
-  let u;
-  try { u = b64dec(envStr); }
-  catch { throw new Error("Envelope is not valid base64."); }
+  const u = decodeEnv(envStr);
   if (u.length < 1 + 32 + 12 + 16) throw new Error("Envelope is truncated or malformed.");
   if (u[0] !== VER) throw new Error("Unknown envelope version: " + u[0] + " — this page only reads v1.");
   const ephPub = u.slice(1, 33);
@@ -154,7 +190,7 @@ async function decryptWith(privScalar, ownPubRaw, envStr){
   } catch {
     throw new Error("Decryption failed — wrong key, or envelope was tampered with.");
   }
-  return TD.decode(pt);
+  return new Uint8Array(pt);   // raw bytes; the caller decodes the text
 }
 
 /* ---------- passphrase wrapper (storage + export use the same record) ---------- */
@@ -224,7 +260,8 @@ async function fpOf(pubRaw){
 
 /* Node export for the test harness; inert in the browser. */
 if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-  module.exports = { b64enc, b64dec, hex, pubEnc, pubDec, cat, isZero,
+  module.exports = { b64enc, b64dec, hex, pubEnc, pubDec, cat, isZero, TE, TD,
+    CODECS, encodeEnv, decodeEnv,
     INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,

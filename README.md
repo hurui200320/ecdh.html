@@ -16,8 +16,8 @@ AES-256-GCM. Browsers do all of it natively via Web Crypto.
 **Designed use case:** the trusted channel dies (for example, server get blocked).
 You and your friends still have *some* internet — an IM, an email, a pastebin —
 but assume that channel is tapped, stored, and actively rewritable. This tool
-turns that channel back into a confidential one by moving base64 envelopes and
-hex public keys through it. Nothing else.
+turns that channel back into a confidential one by moving tagged base64
+envelopes and hex public keys through it. Nothing else.
 
 > Special note: This system need another hard to tamper channel to setup.
 > It's recommended to setup and share the keys over a trusted channel,
@@ -138,9 +138,25 @@ uppercase and embedded whitespace (IM line-wraps) but nothing else.
 
 ### Envelope
 
+The envelope exists as **raw bytes**; its text form — what humans copy-paste
+through the unsafe channel — wraps those bytes in a swappable encoding layer:
+
 ```
-envelope = base64( 0x01 | ephPub[32] | iv[12] | ciphertext )
+text form = TAG || codec( 0x01 | ephPub[32] | iv[12] | ciphertext )
 ```
+
+- `TAG` — one char naming the text encoding, so the decoder can tell at a
+  glance how to parse the rest. Today: `A` = base64 (standard alphabet, with
+  padding). Planned: `B` = base85, and a CJK tag for base4096 picked from the
+  same visual class as its charset so the whole string blends in. Tags match
+  strictly (case-sensitive, no untagged fallback) and are **orthogonal to the
+  version byte**: the tag says how the bytes are spelled, `0x01` inside says
+  what they mean.
+- All decoders strip whitespace before anything else, so IM line-wraps (and a
+  tag split from its payload) survive; encoders emit one canonical compact
+  string.
+
+Envelope bytes:
 
 - `0x01` — version byte
 - `ephPub` — public key of a **per-message ephemeral** X25519 keypair,
@@ -307,11 +323,12 @@ node tests/crypto.test.js
 ```
 
 Loads `crypto.js` (the DOM-free crypto core the page loads) and verifies the DER
-prefixes, envelope layout, HKDF derivation, PBKDF2 wrapper, and emoji
-fingerprints against Node's independent OpenSSL implementation (the same
-operations as the BouncyCastle recipe above), plus the documented failure
-paths: zero shared secret, tampered ciphertext, wrong version byte,
-truncated/garbage input, wrong passphrase, inconsistent records.
+prefixes, envelope layout and the tag-dispatch text layer, HKDF derivation,
+PBKDF2 wrapper, and emoji fingerprints against Node's independent OpenSSL
+implementation (the same operations as the BouncyCastle recipe above), plus the
+documented failure paths: zero shared secret, tampered ciphertext, wrong
+version byte, unknown/missing tags, truncated/garbage input, wrong passphrase,
+inconsistent records.
 
 Validated in headless Chromium via Playwright:
 
@@ -359,6 +376,6 @@ cache on your actual host. Everything else works regardless.
 
 ---
 
-*Spec versions in play: envelope `0x01`, wrapper `v:1`, storage keys `.v1`,
-SW cache `v1`. Change any byte-level behavior = bump everything under it and
-document here.*
+*Spec versions in play: envelope `0x01`, text-form tag `A` (base64), wrapper
+`v:1`, storage keys `.v1`, SW cache `v1`. Change any byte-level behavior = bump
+everything under it and document here.*
