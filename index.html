@@ -1,8 +1,10 @@
 <!doctype html>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
 <meta name="theme-color" content="#090e17">
@@ -72,7 +74,7 @@
     -webkit-font-smoothing:antialiased;
     padding:20px 16px 64px;
   }
-  header,nav#tabs,main,footer,.ctx-banner,.rt-banner{ max-width:920px; margin-left:auto; margin-right:auto; }
+  header,#tabs,main,footer,.ctx-banner,.rt-banner{ max-width:920px; margin-left:auto; margin-right:auto; }
   header{
     border-top:4px solid var(--frame);
     border-left:1px solid var(--line);
@@ -102,7 +104,7 @@
     color:var(--muted); background:var(--surface);
     border:1px solid var(--line); white-space:nowrap; flex-shrink:0;
   }
-  nav#tabs{
+  #tabs{
     display:grid; grid-template-columns:repeat(4,1fr);
     position:sticky; top:0; z-index:10;
     background:var(--surface);
@@ -111,7 +113,7 @@
     counter-reset:tab;
     margin-bottom:0;
   }
-  nav#tabs button{
+  #tabs button{
     margin:0; border:0; border-right:1px solid var(--line); border-radius:0;
     background:transparent; color:var(--muted);
     font:700 .78rem/1.2 var(--font-sans);
@@ -120,19 +122,19 @@
     display:flex; align-items:center; justify-content:center; gap:7px;
     transition:background .12s,color .12s;
   }
-  nav#tabs button:last-child{ border-right:0; }
-  nav#tabs button::before{
+  #tabs button:last-child{ border-right:0; }
+  #tabs button::before{
     counter-increment:tab;
     content:"0" counter(tab);
     font:600 .7rem/1 var(--font-mono);
     color:var(--muted); opacity:.75;
   }
-  nav#tabs button:hover{ color:var(--ink); background:var(--card); }
-  nav#tabs button[aria-selected="true"]{
+  #tabs button:hover{ color:var(--ink); background:var(--card); }
+  #tabs button[aria-selected="true"]{
     background:var(--card); color:var(--ink);
     box-shadow:inset 0 3px 0 var(--cyan-bright);
   }
-  nav#tabs button[aria-selected="true"]::before{
+  #tabs button[aria-selected="true"]::before{
     color:var(--cyan); opacity:1;
   }
   main section, #setup-none, #setup-have{ counter-reset:sec; }
@@ -166,8 +168,8 @@
   @media (max-width: 719px){
     body{ padding:0 0 48px; }
     header{ border-left:0; border-right:0; padding:14px 16px; }
-    nav#tabs{ border-left:0; border-right:0; }
-    nav#tabs button{
+    #tabs{ border-left:0; border-right:0; }
+    #tabs button{
       flex-direction:column; gap:3px;
       padding:9px 4px; font-size:.7rem; letter-spacing:.05em;
     }
@@ -185,6 +187,7 @@
       letter-spacing:.04em;
     }
     .card-body{ padding:16px; }
+    textarea{ font-size:16px; }
   }
   .card h2{
     font-size:1.02rem; font-weight:700;
@@ -390,17 +393,17 @@
   <span id="rt-warn-msg"></span>
 </div>
 
-<nav id="tabs" role="tablist">
+<div id="tabs" role="tablist" aria-label="Sections">
   <button class="tabbtn" data-tab="setup" role="tab" type="button" aria-selected="true">Setup</button>
   <button class="tabbtn" data-tab="encrypt" role="tab" type="button" aria-selected="false">Encrypt</button>
   <button class="tabbtn" data-tab="decrypt" role="tab" type="button" aria-selected="false">Decrypt</button>
   <button class="tabbtn" data-tab="help" role="tab" type="button" aria-selected="false">Help</button>
-</nav>
+</div>
 
 <main>
 
 <!-- ============ SETUP ============ -->
-<section id="sec-setup">
+<section id="sec-setup" role="tabpanel">
   <div id="setup-none">
     <div class="card">
       <div class="card-meta">
@@ -429,7 +432,7 @@
         <p class="hint">Paste the exported JSON backup, or open the file below. The record itself is passphrase-encrypted; the passphrase is asked here to verify it.</p>
       </div>
       <div class="card-body">
-        <textarea id="imp-json" rows="5" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
+        <textarea id="imp-json" rows="5" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
         <input type="file" id="imp-file" accept=".json,application/json">
         <label for="imp-pass">Passphrase</label>
         <input type="password" id="imp-pass" autocomplete="off">
@@ -447,10 +450,10 @@
       </div>
       <div class="card-body">
         <label for="pubout">Public key (hex) — share freely; friends add it as a contact</label>
-        <textarea id="pubout" rows="2" readonly></textarea>
+        <textarea id="pubout" rows="2" spellcheck="false" autocorrect="off" autocapitalize="off" readonly></textarea>
         <button id="btn-copy-pub" type="button">Copy public key</button>
         <label>Fingerprint — read over a voice call</label>
-        <div class="fp-readout">
+        <div class="fp-readout" translate="no">
           <div id="fp-emoji" class="fp-emoji"></div>
           <div id="fp-hex" class="fp-hex"></div>
         </div>
@@ -491,7 +494,7 @@
 </section>
 
 <!-- ============ ENCRYPT ============ -->
-<section id="sec-encrypt" hidden>
+<section id="sec-encrypt" role="tabpanel" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>Recipients</h2>
@@ -505,7 +508,7 @@
       <div id="contacts-warn" class="warn" hidden></div>
       <div id="sel-fp" hidden>
         <label>Fingerprint of selected contact</label>
-        <div class="fp-readout">
+        <div class="fp-readout" translate="no">
           <div id="sel-fp-emoji" class="fp-emoji"></div>
           <div id="sel-fp-hex" class="fp-hex"></div>
         </div>
@@ -515,9 +518,9 @@
         <label for="ct-name">Name</label>
         <input type="text" id="ct-name" autocomplete="off" placeholder="e.g. Alice">
         <label for="ct-pub">Their public key (hex)</label>
-        <textarea id="ct-pub" rows="2" placeholder="64 hex chars (32-byte public key)"></textarea>
+        <textarea id="ct-pub" rows="2" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="64 hex chars (32-byte public key)"></textarea>
         <div id="ct-fp" hidden>
-          <div class="fp-readout">
+          <div class="fp-readout" translate="no">
             <div id="ct-fp-emoji" class="fp-emoji"></div>
             <div id="ct-fp-hex" class="fp-hex"></div>
           </div>
@@ -533,7 +536,7 @@
         <button id="btn-export-contacts" class="primary" type="button">Download contacts (.json)</button>
         <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
         <label for="imp-contacts-json">Import contacts (JSON array)</label>
-        <textarea id="imp-contacts-json" rows="4" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
+        <textarea id="imp-contacts-json" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
         <input type="file" id="imp-contacts-file" accept=".json,application/json">
         <button id="btn-import-contacts" type="button">Import contacts</button>
         <div id="imp-contacts-err" class="err" hidden></div>
@@ -547,7 +550,7 @@
       <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
     </div>
     <div class="card-body">
-      <textarea id="msg" rows="7" placeholder="Message to encrypt…"></textarea>
+      <textarea id="msg" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Message to encrypt…"></textarea>
       <div class="codec-row">
         <label for="codec-sel">Output format</label>
         <select id="codec-sel" aria-label="Envelope text encoding">
@@ -556,7 +559,7 @@
         </select>
       </div>
       <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
-      <textarea id="env-out" rows="4" readonly hidden></textarea>
+      <textarea id="env-out" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" readonly hidden></textarea>
       <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
       <button id="btn-clear-msg" type="button" hidden>Clear</button>
       <div id="enc-err" class="err" hidden></div>
@@ -565,7 +568,7 @@
 </section>
 
 <!-- ============ DECRYPT ============ -->
-<section id="sec-decrypt" hidden>
+<section id="sec-decrypt" role="tabpanel" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>Decrypt a message</h2>
@@ -573,12 +576,12 @@
     </div>
     <div class="card-body">
       <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
-      <textarea id="env-in" rows="4" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
+      <textarea id="env-in" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
       <label for="dec-pass">Passphrase</label>
       <input type="password" id="dec-pass" autocomplete="off">
       <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
       <div id="dec-err" class="err" hidden></div>
-      <textarea id="plain-out" rows="7" placeholder="(empty message)" readonly hidden></textarea>
+      <textarea id="plain-out" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="(empty message)" readonly hidden></textarea>
       <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
       <button id="btn-clear-plain" type="button" hidden>Clear</button>
     </div>
@@ -586,7 +589,7 @@
 </section>
 
 <!-- ============ HELP ============ -->
-<section id="sec-help" class="help" hidden>
+<section id="sec-help" class="help" role="tabpanel" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>What this is</h2>
@@ -688,6 +691,14 @@ function esc(s){
     (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
 }
 const FLASH_TIMERS = new WeakMap();
+function clearFlash(btn){
+  const prev = FLASH_TIMERS.get(btn);
+  if (prev){
+    clearTimeout(prev.id);
+    btn.textContent = prev.old;
+    FLASH_TIMERS.delete(btn);
+  }
+}
 function flash(btn, txt){
   if (!btn) return;
   const prev = FLASH_TIMERS.get(btn);
@@ -781,10 +792,14 @@ function loadState(){
   try { RECORD = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { RECORD = null; }
   try { CONTACTS = JSON.parse(localStorage.getItem(LS_CONTACTS) || "[]"); } catch { CONTACTS = []; }
   try { LAST_PUB = localStorage.getItem(LS_LAST); } catch { LAST_PUB = null; }
-  if (!Array.isArray(CONTACTS)) CONTACTS = [];
-  CONTACTS = CONTACTS.filter(c => c && typeof c.name === "string" && typeof c.pub === "string");
+  CONTACTS = (Array.isArray(CONTACTS) ? CONTACTS : []).flatMap(c => {
+    if (!c || typeof c.name !== "string" || typeof c.pub !== "string") return [];
+    try { return [{ name: c.name.trim() || "friend", pub: pubEnc(pubDec(c.pub)) }]; }
+    catch { return []; }
+  });
   if (RECORD && typeof RECORD.pub === "string"){
-    try { OWN_PUB = pubDec(RECORD.pub); } catch { RECORD = null; OWN_PUB = null; }
+    try { parseRecord(RECORD); OWN_PUB = pubDec(RECORD.pub); }
+    catch { RECORD = null; OWN_PUB = null; }
     if (!OWN_PUB || OWN_PUB.length !== 32){ RECORD = null; OWN_PUB = null; }
   } else if (RECORD){ RECORD = null; }
 }
@@ -884,16 +899,17 @@ function clearPlain(){
 
 /* ---------- setup handlers ---------- */
 $("#gen-pass").addEventListener("input", (e) => {
-  const v = e.target.value;
+  const v = e.currentTarget.value;
   $("#gen-warn").hidden = v.length >= 12 || v.length === 0;
 });
 
 $("#btn-generate").addEventListener("click", async (e) => {
   const err = $("#gen-err"); hideErr(err); hideErr($("#save-warn"));
-  const btn = e.target;
+  const btn = e.currentTarget;
   const p1 = $("#gen-pass").value, p2 = $("#gen-pass2").value;
   if (!p1) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
   if (p1 !== p2) return showErr(err, "Passphrases don't match.");
+  clearFlash(btn);
   btn.disabled = true; btn.textContent = "Generating…";
   let ok = false, priv = null;
   try {
@@ -923,9 +939,11 @@ $("#btn-generate").addEventListener("click", async (e) => {
   if (ok) flash(btn, "Generated ✓");
 });
 
+const MAX_IMPORT_BYTES = 1024 * 1024;
+
 $("#btn-import").addEventListener("click", async (e) => {
   const err = $("#imp-err"); hideErr(err); hideErr($("#save-warn"));
-  const btn = e.target;
+  const btn = e.currentTarget;
   let rec;
   try { rec = JSON.parse($("#imp-json").value); }
   catch { return showErr(err, "Not valid JSON — paste the exported backup record or use the file button."); }
@@ -933,9 +951,13 @@ $("#btn-import").addEventListener("click", async (e) => {
     return showErr(err, "That JSON is not an ecdh.html key record (expected an object).");
   const pass = $("#imp-pass").value;
   if (!pass) return showErr(err, "Enter the passphrase for this record.");
+  clearFlash(btn);
   btn.disabled = true; btn.textContent = "Restoring…";
   let ok = false, scalar = null;
   try {
+    parseRecord(rec);
+    if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
+    pubDec(rec.pub);
     scalar = await unwrapScalar(pass, rec);          // throws on wrong passphrase
     RECORD = await recordFromImport(rec, scalar);    // throws on missing/mismatched pub
     OWN_PUB = pubDec(RECORD.pub);
@@ -954,13 +976,16 @@ $("#btn-import").addEventListener("click", async (e) => {
 });
 
 $("#imp-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
+  const err = $("#imp-err"); hideErr(err);
+  const f = e.currentTarget.files[0];
+  e.currentTarget.value = "";
   if (!f) return;
-  try { $("#imp-json").value = await f.text(); } catch { /* ignore */ }
-  finally { e.target.value = ""; }
+  if (f.size > MAX_IMPORT_BYTES) return showErr(err, "Backup file is too large (expected a small JSON file).");
+  try { $("#imp-json").value = await f.text(); }
+  catch { showErr(err, "Could not read the selected file."); }
 });
 
-$("#btn-copy-pub").addEventListener("click", (b) => copyText($("#pubout").value, b.target));
+$("#btn-copy-pub").addEventListener("click", (b) => copyText($("#pubout").value, b.currentTarget));
 
 $("#btn-export").addEventListener("click", () => {
   if (!RECORD) return;
@@ -972,28 +997,31 @@ $("#btn-export").addEventListener("click", () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 });
-$("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.target));
+$("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.currentTarget));
 
 $("#ch-new").addEventListener("input", (e) => {
-  const v = e.target.value;
+  const v = e.currentTarget.value;
   $("#ch-warn").hidden = v.length >= 12 || v.length === 0;
 });
 
 $("#btn-chpass").addEventListener("click", async (e) => {
   const err = $("#ch-err"); hideErr(err); hideErr($("#save-warn"));
-  const btn = e.target;
+  const btn = e.currentTarget;
   const old = $("#ch-old").value, n1 = $("#ch-new").value, n2 = $("#ch-new2").value;
-  if (!RECORD) return showErr(err, "No key stored.");
+  const targetRec = RECORD;
+  if (!targetRec) return showErr(err, "No key stored.");
   if (!old) return showErr(err, "Enter the current passphrase.");
   if (!n1 || n1 !== n2) return showErr(err, "New passphrases are empty or don't match.");
+  clearFlash(btn);
   btn.disabled = true; btn.textContent = "Working…";
   let ok = false, scalar = null;
   try {
-    scalar = await unwrapScalar(old, RECORD);
+    scalar = await unwrapScalar(old, targetRec);
     // Re-wrap at the current default so legacy records upgrade their KDF cost.
     const w = await wrapScalar(n1, scalar, PBKDF2_ITER);
+    if (RECORD !== targetRec) return;
     RECORD = {
-      ...RECORD,
+      ...targetRec,
       iter: PBKDF2_ITER,
       salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
     };
@@ -1002,7 +1030,9 @@ $("#btn-chpass").addEventListener("click", async (e) => {
     try { saveRecord(); }
     catch (se){ showErr($("#save-warn"), se.message); }
     ok = true;
-  } catch (ex){ showErr(err, ex.message || "Failed."); }
+  } catch (ex){
+    if (RECORD === targetRec) showErr(err, ex.message || "Failed.");
+  }
   finally {
     if (scalar) scalar.fill(0);
     btn.disabled = false; btn.textContent = "Change passphrase";
@@ -1023,7 +1053,7 @@ $("#wipe-contacts").addEventListener("change", () => {
   b.textContent = wipeBtnLabel(false);
 });
 $("#btn-wipe").addEventListener("click", async (e) => {
-  const b = e.target;
+  const b = e.currentTarget;
   if (!RECORD) return;
   if (!WIPE_ARMED){
     WIPE_ARMED = true;
@@ -1094,7 +1124,7 @@ $("#ct-pub").addEventListener("input", () => {
 
 $("#btn-add-contact").addEventListener("click", async (e) => {
   const err = $("#ct-err"); hideErr(err); hideErr($("#contacts-warn"));
-  const btn = e.target;
+  const btn = e.currentTarget;
   const name = $("#ct-name").value.trim() || "friend";
   const pubStr = $("#ct-pub").value.trim();
   if (!pubStr) return showErr(err, "Paste their public key (hex).");
@@ -1154,18 +1184,21 @@ $("#btn-export-contacts").addEventListener("click", () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 });
-$("#btn-copy-contacts").addEventListener("click", (b) => copyText(JSON.stringify(CONTACTS), b.target));
+$("#btn-copy-contacts").addEventListener("click", (b) => copyText(JSON.stringify(CONTACTS), b.currentTarget));
 
 $("#imp-contacts-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0];
+  const err = $("#imp-contacts-err"); hideErr(err);
+  const f = e.currentTarget.files[0];
+  e.currentTarget.value = "";
   if (!f) return;
-  try { $("#imp-contacts-json").value = await f.text(); } catch { /* ignore */ }
-  finally { e.target.value = ""; }
+  if (f.size > MAX_IMPORT_BYTES) return showErr(err, "Contacts file is too large (expected a small JSON file).");
+  try { $("#imp-contacts-json").value = await f.text(); }
+  catch { showErr(err, "Could not read the selected file."); }
 });
 
 $("#btn-import-contacts").addEventListener("click", async (e) => {
   const err = $("#imp-contacts-err"); hideErr(err); hideErr($("#contacts-warn"));
-  const btn = e.target;
+  const btn = e.currentTarget;
   let list;
   try { list = JSON.parse($("#imp-contacts-json").value); }
   catch { return showErr(err, "Not valid JSON — paste the exported contacts array or use the file button."); }
@@ -1189,7 +1222,7 @@ $("#btn-import-contacts").addEventListener("click", async (e) => {
 
 $("#btn-encrypt").addEventListener("click", async (e) => {
   const err = $("#enc-err"); hideErr(err);
-  const btn = e.target;
+  const btn = e.currentTarget;
   const idx = Number.parseInt($("#contact-sel").value, 10);
   const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (!c) return showErr(err, "Pick a contact first.");
@@ -1199,6 +1232,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
   $("#btn-clear-msg").hidden = true;
+  clearFlash(btn);
   btn.disabled = true; btn.textContent = "Encrypting…";
   let ptBytes = null;
   try {
@@ -1217,7 +1251,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   }
 });
 
-$("#btn-copy-env").addEventListener("click", (b) => copyText($("#env-out").value, b.target));
+$("#btn-copy-env").addEventListener("click", (b) => copyText($("#env-out").value, b.currentTarget));
 $("#codec-sel").addEventListener("change", () => {
   hideErr($("#enc-err"));
   clearStaleEnv();
@@ -1233,35 +1267,44 @@ $("#btn-clear-msg").addEventListener("click", clearMsg);
 
 $("#btn-decrypt").addEventListener("click", async (e) => {
   const err = $("#dec-err"); hideErr(err);
-  const btn = e.target;
-  if (!RECORD) return showErr(err, "No identity on this device — Setup tab first.");
+  const btn = e.currentTarget;
+  const targetRec = RECORD;
+  if (!targetRec || !OWN_PUB) return showErr(err, "No identity on this device — Setup tab first.");
+  const ownPub = OWN_PUB.slice();
   const env = $("#env-in").value;
   const pass = $("#dec-pass").value;
   if (!env.trim()) return showErr(err, "Paste an envelope first.");
   if (!pass) return showErr(err, "Enter the passphrase.");
+  clearFlash(btn);
   btn.disabled = true; btn.textContent = "Decrypting…";
   $("#plain-out").hidden = true;
   $("#btn-copy-plain").hidden = true;
   $("#btn-clear-plain").hidden = true;
   let scalar = null, ptBytes = null;
   try {
-    scalar = await unwrapScalar(pass, RECORD);
-    ptBytes = await decryptWith(scalar, OWN_PUB, env);
+    parseEnv(env);
+    scalar = await unwrapScalar(pass, targetRec);
+    if (RECORD !== targetRec) return;
+    ptBytes = await decryptWith(scalar, ownPub, env);
+    if (RECORD !== targetRec) return;
     const text = TD.decode(ptBytes);
     $("#plain-out").value = text;
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;
     $("#btn-clear-plain").hidden = false;
     $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
-  } catch (ex){ showErr(err, ex.message || "Decryption failed."); }
+  } catch (ex){
+    if (RECORD === targetRec) showErr(err, ex.message || "Decryption failed.");
+  }
   finally {
+    ownPub.fill(0);
     if (scalar) scalar.fill(0);
     if (ptBytes) ptBytes.fill(0);
     btn.disabled = false; btn.textContent = "Decrypt";
   }
 });
 
-$("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.target));
+$("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.currentTarget));
 $("#btn-clear-plain").addEventListener("click", clearPlain);
 
 for (const [inp, btn] of [["#gen-pass2", "#btn-generate"], ["#imp-pass", "#btn-import"], ["#ch-new2", "#btn-chpass"], ["#dec-pass", "#btn-decrypt"]])

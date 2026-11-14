@@ -349,13 +349,20 @@ function decodeEnv(str){
   const s = str.replace(/\s+/g, "");
   const codec = CODECS[s[0]];
   if (!codec){
+    const first = s ? String.fromCodePoint(s.codePointAt(0)) : "";
     throw new Error(s
-      ? "Unknown envelope encoding tag: " + JSON.stringify(s[0])
+      ? "Unknown envelope encoding tag: " + JSON.stringify(first)
         + " — this page reads: " + Object.keys(CODECS).join(", ") + "."
       : "Envelope is empty (no encoding tag).");
   }
   try { return codec.dec(s.slice(1)); }
   catch { throw new Error("Envelope is not valid " + codec.name + "."); }
+}
+function parseEnv(envStr){
+  const u = decodeEnv(envStr);
+  if (u.length < 1 + 32 + 12 + 16) throw new Error("Envelope is truncated or malformed.");
+  if (u[0] !== VER) throw new Error("Unknown envelope version: " + u[0] + " — this page only reads v1.");
+  return { ephPub: u.slice(1, 33), iv: u.slice(33, 45), ct: u.slice(45) };
 }
 async function encryptTo(recipPubRaw, plaintext){
   if (!(plaintext instanceof Uint8Array))
@@ -386,12 +393,7 @@ async function encryptTo(recipPubRaw, plaintext){
   }
 }
 async function decryptWith(privScalar, ownPubRaw, envStr){
-  const u = decodeEnv(envStr);
-  if (u.length < 1 + 32 + 12 + 16) throw new Error("Envelope is truncated or malformed.");
-  if (u[0] !== VER) throw new Error("Unknown envelope version: " + u[0] + " — this page only reads v1.");
-  const ephPub = u.slice(1, 33);
-  const iv = u.slice(33, 45);
-  const ct = u.slice(45);
+  const { ephPub, iv, ct } = parseEnv(envStr);
   let ss, key;
   try {
     ss = await x25519(privScalar, ephPub);
@@ -569,11 +571,13 @@ function checkRuntime(ua, globals){
     return { kind: "webview", label: "in-app WebView" };
   for (const [re, label] of WEBVIEW_RULES)
     if (re.test(s)) return { kind: "webview", label };
+  for (const [re, label] of BROWSER_RULES)
+    if (re.test(s)) return { kind: "browser", label };
+  if (g.navigator && g.navigator.standalone === true && /AppleWebKit\//i.test(s))
+    return null;
   if (/\b(?:iPhone|iPad|iPod)\b/i.test(s) && /AppleWebKit\//i.test(s)
       && !/\b(?:Safari|CriOS|FxiOS|EdgiOS|OPiOS)\//i.test(s))
     return { kind: "webview", label: "iOS in-app WebView" };
-  for (const [re, label] of BROWSER_RULES)
-    if (re.test(s)) return { kind: "browser", label };
   const isKnownStandalone =
     /\b(?:Firefox|FxiOS)\/[\d.]+/.test(s) ||
     /\b(?:Edg|EdgA|EdgiOS)\/[\d.]+/.test(s) ||
@@ -589,9 +593,9 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
   module.exports = { b64enc, b64dec, z85enc, z85dec,
     B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
     hex, pubEnc, pubDec, cat, isZero, TE, TD,
-    CODECS, encodeEnv, decodeEnv,
+    CODECS, encodeEnv, decodeEnv, parseEnv,
     INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
-    unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };
+    parseRecord, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };
 }

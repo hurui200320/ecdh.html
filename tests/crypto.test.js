@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /*
  * Crypto-core cross-check for ecdh.html — no browser required.
  * Needs Node >= 20 (global WebCrypto with X25519).
@@ -29,9 +30,9 @@ const core = require("../crypto.js");
 
 const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
-        TE, TD, encodeEnv, decodeEnv,
+        TE, TD, encodeEnv, decodeEnv, parseEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
-        wrapScalar, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime } = core;
+        wrapScalar, parseRecord, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime } = core;
 
 /* helper: build a wrapper record the way the app does */
 async function makeRecord(priv, pub, pass, iter){
@@ -96,11 +97,16 @@ async function makeRecord(priv, pub, pass, iter){
     "leading whitespace + wrapped payload tolerated");
   assert.throws(() => decodeEnv("a" + z85enc(env)), /tag/i, "tags are case-sensitive");
   assert.throws(() => decodeEnv("Z" + z85enc(env)), /tag/i, "unknown tag is rejected");
+  assert.throws(() => decodeEnv("😀" + z85enc(env)), /"😀"/, "non-BMP unknown tag formats full codepoint");
   assert.throws(() => decodeEnv(""), /empty/i, "empty input is rejected");
   assert.throws(() => decodeEnv('A""'), /Z85/i, "bad payload under a valid tag");
   assert.throws(() => decodeEnv("A#####"), /Z85/i, "5-char group decoding above 32 bits is rejected");
   assert.throws(() => decodeEnv("A0"), /Z85/i, "a lone tail char is never valid");
   assert.throws(() => encodeEnv(env, "Z"), /tag/i, "unknown tag on encode");
+  const parsedEnv = parseEnv(envStr);
+  assert.strictEqual(parsedEnv.ephPub.length, 32, "parseEnv extracts 32-byte ephPub");
+  assert.strictEqual(parsedEnv.iv.length, 12, "parseEnv extracts 12-byte iv");
+  assert.throws(() => parseEnv(encodeEnv(env.slice(0, 40))), /truncated/i, "parseEnv rejects truncated envelope");
 
   /* 2c. Z85 codec: spec vector, tails, strictness, independent cross-check */
   // Vector from the ZeroMQ Z85 spec: 0x864FD26FB559F75B <-> "HelloWorld".
@@ -345,14 +351,26 @@ async function makeRecord(priv, pub, pass, iter){
     checkRuntime("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"),
     null, "standard desktop Chrome passes");
   assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"),
+    null, "standard desktop Edge passes");
+  assert.strictEqual(
     checkRuntime("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0"),
     null, "standard Firefox passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15"),
+    null, "standard macOS Safari passes");
   assert.strictEqual(
     checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"),
     null, "standard iOS Safari passes");
   assert.strictEqual(
     checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.0.0 Mobile/15E148 Safari/604.1"),
     null, "standard iOS Chrome passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148", { navigator: { standalone: true } }),
+    null, "installed iOS Home Screen PWA passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", { navigator: { standalone: true } }),
+    null, "installed iPadOS Home Screen PWA passes");
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.50"),
     { kind: "webview", label: "WeChat in-app WebView" }, "WeChat UA detected");
@@ -368,6 +386,9 @@ async function makeRecord(priv, pub, pass, iter){
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"),
     { kind: "webview", label: "iOS in-app WebView" }, "generic iOS WKWebView (missing Safari/) detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 UCBrowser/16.0.0"),
+    { kind: "browser", label: "UC Browser" }, "iOS third-party browser detected specifically before generic WKWebView rule");
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 QQBrowser/11.9.0"),
     { kind: "browser", label: "QQ Browser" }, "QQ Browser detected despite Chrome/Safari tokens");
