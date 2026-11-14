@@ -1,10 +1,11 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
-<html lang="en">
+<html lang="en" translate="no">
 <head>
 <meta charset="utf-8">
+<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; font-src 'none'; manifest-src 'self' file:; worker-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'sha256-dIAqUKNPNU1iC50nm+v34E5nxy3lShmFE5wj0g38cSw='; style-src 'self' 'unsafe-inline'; img-src 'self' file:; font-src 'none'; manifest-src 'self' file:; worker-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
@@ -694,10 +695,6 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-function esc(s){
-  return String(s).replace(/[&<>"']/g,
-    (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
-}
 const FLASH_TIMERS = new WeakMap();
 function clearFlash(btn){
   const prev = FLASH_TIMERS.get(btn);
@@ -816,7 +813,7 @@ function loadState(){
     if (!c || typeof c.name !== "string" || typeof c.pub !== "string") continue;
     try {
       const pubBytes = pubDec(c.pub);
-      if (isLowOrderPub(pubBytes)) continue;
+      if (isLowOrderPub(pubBytes) || isNonCanonicalPub(pubBytes)) continue;
       const pub = pubEnc(pubBytes);
       byPub.set(pub, { name: cleanContactName(c.name), pub });
     } catch { /* skip corrupt entry */ }
@@ -825,7 +822,7 @@ function loadState(){
   if (RECORD && typeof RECORD.pub === "string"){
     try { parseRecord(RECORD); OWN_PUB = pubDec(RECORD.pub); }
     catch { RECORD = null; OWN_PUB = null; }
-    if (!OWN_PUB || OWN_PUB.length !== 32 || isLowOrderPub(OWN_PUB)){ RECORD = null; OWN_PUB = null; }
+    if (!OWN_PUB || OWN_PUB.length !== 32 || isLowOrderPub(OWN_PUB) || isNonCanonicalPub(OWN_PUB)){ RECORD = null; OWN_PUB = null; }
   } else if (RECORD){ RECORD = null; }
 }
 
@@ -841,9 +838,22 @@ function showTab(name){
 }
 
 function renderFp(emojiSel, hexSel, fp){
-  $(emojiSel).innerHTML = fp.items.map(it =>
-    `<span class="fp-item"><span class="fp-ico">${esc(it.emoji)}</span> <span class="fp-lbl">${esc(it.name)}</span></span>`
-  ).join(" ");
+  const nodes = [];
+  for (let i = 0; i < fp.items.length; i++){
+    if (i) nodes.push(" ");
+    const it = fp.items[i];
+    const tile = document.createElement("span");
+    tile.className = "fp-item";
+    const ico = document.createElement("span");
+    ico.className = "fp-ico";
+    ico.textContent = it.emoji;
+    const lbl = document.createElement("span");
+    lbl.className = "fp-lbl";
+    lbl.textContent = it.name;
+    tile.append(ico, " ", lbl);
+    nodes.push(tile);
+  }
+  $(emojiSel).replaceChildren(...nodes);
   $(hexSel).textContent = fp.hexs;
 }
 
@@ -876,15 +886,15 @@ async function renderContacts(){
     let idx = CONTACTS.findIndex(c => c.pub === LAST_PUB);
     if (idx < 0) idx = 0;
     LAST_PUB = CONTACTS[idx].pub;
-    sel.innerHTML = CONTACTS.map((c, i) => {
+    sel.replaceChildren(...CONTACTS.map((c, i) => {
       const label = `${c.name} (${c.pub.slice(0, 8)}…)`;
-      return `<option value="${i}"${i === idx ? " selected" : ""}>${esc(label)}</option>`;
-    }).join("");
+      return new Option(label, String(i), i === idx, i === idx);
+    }));
     $("#btn-del-contact").disabled = false;
     $("#btn-encrypt").disabled = false;
   } else {
     LAST_PUB = null;
-    sel.innerHTML = `<option value="">— no contacts yet —</option>`;
+    sel.replaceChildren(new Option("— no contacts yet —", ""));
     $("#btn-del-contact").disabled = true;
     $("#btn-encrypt").disabled = true;
     $("#sel-fp").hidden = true;
@@ -977,8 +987,11 @@ const MAX_IMPORT_BYTES = 1024 * 1024;
 $("#btn-import").addEventListener("click", async (e) => {
   const err = $("#imp-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.currentTarget;
+  const rawJson = $("#imp-json").value;
+  if (rawJson.length > MAX_IMPORT_BYTES)
+    return showErr(err, "Backup JSON is too large (expected a small JSON record).");
   let rec;
-  try { rec = JSON.parse($("#imp-json").value); }
+  try { rec = JSON.parse(rawJson); }
   catch { return showErr(err, "Not valid JSON — paste the exported backup record or use the file button."); }
   if (!rec || typeof rec !== "object" || Array.isArray(rec))
     return showErr(err, "That JSON is not an ecdh.html key record (expected an object).");
@@ -991,7 +1004,9 @@ $("#btn-import").addEventListener("click", async (e) => {
   try {
     parseRecord(rec);
     if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
-    if (isLowOrderPub(pubDec(rec.pub))) throw new Error("Record has an invalid (low-order) public key.");
+    const recPub = pubDec(rec.pub);
+    if (isLowOrderPub(recPub) || isNonCanonicalPub(recPub))
+      throw new Error("Record has an invalid (low-order or non-canonical) public key.");
     scalar = await unwrapScalar(pass, rec);          // throws on wrong passphrase
     let nextRec = await recordFromImport(rec, scalar); // throws on missing/mismatched pub
     if (nextRec.iter < PBKDF2_ITER){
@@ -1129,7 +1144,7 @@ $("#btn-wipe").addEventListener("click", async (e) => {
   if (OWN_PUB) OWN_PUB.fill(0);
   RECORD = null; OWN_PUB = null;
   $("#pubout").value = "";
-  $("#fp-emoji").innerHTML = ""; $("#fp-hex").textContent = "";
+  $("#fp-emoji").replaceChildren(); $("#fp-hex").textContent = "";
   $("#gen-pass").value = $("#gen-pass2").value = ""; $("#gen-warn").hidden = true; hideErr($("#gen-err"));
   $("#imp-json").value = ""; $("#imp-file").value = ""; $("#imp-pass").value = ""; hideErr($("#imp-err"));
   $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = ""; $("#ch-warn").hidden = true; hideErr($("#ch-err"));
@@ -1165,7 +1180,7 @@ $("#ct-pub").addEventListener("input", () => {
     if (!v) return;
     try {
       const pub = pubDec(v);
-      if (isLowOrderPub(pub)) throw new Error("low-order");
+      if (isLowOrderPub(pub) || isNonCanonicalPub(pub)) throw new Error("invalid-pub");
       const fp = await fpOf(pub);
       if ($("#ct-pub").value.trim() !== v) return;
       $("#ct-fp").hidden = false;
@@ -1185,11 +1200,12 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
   if (!pubStr) return showErr(err, "Paste their public key (hex).");
   let pub;
   try { pub = pubDec(pubStr); } catch { return showErr(err, "Public key is not valid hex (expected 64 chars, 0-9a-f)."); }
-  if (isLowOrderPub(pub))
-    return showErr(err, "This public key is invalid (low-order point) and cannot be used.");
+  if (isLowOrderPub(pub) || isNonCanonicalPub(pub))
+    return showErr(err, "This public key is invalid (low-order or non-canonical point) and cannot be used.");
   const pubHex = pubEnc(pub);   // canonical form (lowercase)
   if (CONTACTS.some(c => c.pub === pubHex))
     return showErr(err, "This public key is already saved.");
+  const dupName = CONTACTS.some(c => c.name.toLowerCase() === name.toLowerCase());
   CONTACTS.push({ name, pub: pubHex });
   LAST_PUB = pubHex;
   clearTimeout(ctFpTimer);
@@ -1197,10 +1213,17 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
   $("#ct-fp").hidden = true; $("#ct-wait").hidden = true;
   clearStaleEnv();
   await renderContacts();
+  let warnMsg = dupName
+    ? "Note: another contact already uses this name — verify the 12-emoji fingerprint before encrypting, or remove the old key if they rotated."
+    : "";
   try {
     saveContacts();
     localStorage.setItem(LS_LAST, pubHex);   // last-contact tracked by key, not name
-  } catch (ex){ showErr($("#contacts-warn"), ex.message || "Could not persist contacts to browser storage."); }
+  } catch (ex){
+    const seMsg = ex.message || "Could not persist contacts to browser storage.";
+    warnMsg = warnMsg ? warnMsg + " " + seMsg : seMsg;
+  }
+  if (warnMsg) showErr($("#contacts-warn"), warnMsg);
   flash(btn, "Added ✓");
 });
 
@@ -1270,8 +1293,11 @@ $("#imp-contacts-file").addEventListener("change", async (e) => {
 $("#btn-import-contacts").addEventListener("click", async (e) => {
   const err = $("#imp-contacts-err"); hideErr(err); hideErr($("#contacts-warn"));
   const btn = e.currentTarget;
+  const rawJson = $("#imp-contacts-json").value;
+  if (rawJson.length > MAX_IMPORT_BYTES)
+    return showErr(err, "Contacts JSON is too large (expected a small JSON array).");
   let list;
-  try { list = JSON.parse($("#imp-contacts-json").value); }
+  try { list = JSON.parse(rawJson); }
   catch { return showErr(err, "Not valid JSON — paste the exported contacts array or use the file button."); }
   try {
     const incoming = contactsFromImport(list);
@@ -1303,7 +1329,8 @@ $("#btn-import-contacts").addEventListener("click", async (e) => {
       saveContacts();
       localStorage.setItem(LS_LAST, LAST_PUB);
     } catch (se){
-      warnMsg = se.message || "Could not persist contacts to browser storage.";
+      const seMsg = se.message || "Could not persist contacts to browser storage.";
+      warnMsg = warnMsg ? warnMsg + " " + seMsg : seMsg;
     }
     if (warnMsg) showErr($("#contacts-warn"), warnMsg);
     flash(btn, "Imported ✓");
@@ -1318,11 +1345,12 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   if (!c) return showErr(err, "Pick a contact first.");
   const msgText = $("#msg").value;
   if (!msgText) return showErr(err, "Enter a message to encrypt.");
+  if (msgText.length > MAX_IMPORT_BYTES) return showErr(err, "Message is too large.");
   const codecTag = $("#codec-sel").value;
   let pub;
   try {
     pub = pubDec(c.pub);
-    if (isLowOrderPub(pub)) throw new Error("low-order");
+    if (isLowOrderPub(pub) || isNonCanonicalPub(pub)) throw new Error("invalid-pub");
   } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").value = "";
   $("#env-out").hidden = true;
@@ -1375,6 +1403,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   const env = $("#env-in").value;
   const pass = $("#dec-pass").value;
   if (!env.trim()) return showErr(err, "Paste an envelope first.");
+  if (env.length > MAX_IMPORT_BYTES * 2) return showErr(err, "Envelope is too large.");
   if (!pass) return showErr(err, "Enter the passphrase.");
   clearFlash(btn);
   btn.disabled = true; btn.textContent = "Decrypting…";
@@ -1383,6 +1412,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   try {
     parseEnv(env);
     scalar = await unwrapScalar(pass, targetRec);
+    if ($("#dec-pass").value === pass) $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
     if (RECORD !== targetRec || $("#env-in").value !== env) return;
     ptBytes = await decryptWith(scalar, ownPub, env);
     if (RECORD !== targetRec || $("#env-in").value !== env) return;
@@ -1391,7 +1421,6 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;
     $("#btn-clear-plain").hidden = false;
-    if ($("#dec-pass").value === pass) $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
   } catch (ex){
     if (RECORD === targetRec && $("#env-in").value === env) showErr(err, ex.message || "Decryption failed.");
   }
@@ -1408,8 +1437,35 @@ $("#btn-clear-plain").addEventListener("click", clearPlain);
 
 window.addEventListener("pagehide", () => {
   clearPlain();
+  clearMsg();
   $("#gen-pass").value = $("#gen-pass2").value = $("#imp-pass").value = "";
   $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
+});
+
+window.addEventListener("storage", async (e) => {
+  if (e.key === LS_THEME){
+    applyTheme(e.newValue === "dark" || e.newValue === "light" ? e.newValue : null);
+    return;
+  }
+  if (e.key !== null && e.key !== LS_KEY && e.key !== LS_CONTACTS && e.key !== LS_LAST) return;
+  const prevKeyJson = RECORD ? JSON.stringify(RECORD) : null;
+  if (OWN_PUB) OWN_PUB.fill(0);
+  RECORD = null; OWN_PUB = null;
+  loadState();
+  const nextKeyJson = RECORD ? JSON.stringify(RECORD) : null;
+  if (nextKeyJson !== prevKeyJson){
+    clearPlain();
+    $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
+  }
+  if (!RECORD){
+    clearMsg();
+    $("#pubout").value = "";
+    $("#fp-emoji").replaceChildren(); $("#fp-hex").textContent = "";
+    for (const d of $$("#setup-have details")) d.open = false;
+  }
+  await renderSetup();
+  await renderContacts();
+  renderDecryptPre();
 });
 
 for (const [inp, btn] of [["#gen-pass2", "#btn-generate"], ["#imp-pass", "#btn-import"], ["#ch-new2", "#btn-chpass"], ["#dec-pass", "#btn-decrypt"]])
@@ -1422,21 +1478,24 @@ for (const b of $$("#tabs .tabbtn"))
   b.addEventListener("click", () => showTab(b.dataset.tab));
 
 (async function boot(){
-  const bail = (title, msg) => {
+  const bail = (title, msg, hideUi = false) => {
     $("#ctx-warn-title").textContent = title;
     $("#ctx-warn-msg").textContent = msg;
     $("#ctx-warn").hidden = false;
-    for (const el of $$("main button, main input, main textarea, main select")) el.disabled = true;
+    if (hideUi){ $("#tabs").hidden = true; $("main").hidden = true; }
+    for (const el of $$("#btn-theme, #tabs button, main button, main input, main textarea, main select")) el.disabled = true;
   };
   try {
     if (window.self !== window.top){
       bail("Framing is not allowed.",
-        "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.");
+        "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.",
+        true);
       return;
     }
   } catch {
     bail("Framing is not allowed.",
-      "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.");
+      "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.",
+      true);
     return;
   }
   if (typeof genKeyPair !== "function" || typeof checkRuntime !== "function"){

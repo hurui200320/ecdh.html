@@ -258,7 +258,11 @@ function cat(...arrs){
   for (const a of arrs){ out.set(a, o); o += a.length; }
   return out;
 }
-function isZero(u8){ for (const b of u8) if (b) return false; return true; }
+function isZero(u8){
+  let d = 0;
+  for (const b of u8) d |= b;
+  return d === 0;
+}
 const TE = new TextEncoder();
 const TD = new TextDecoder("utf-8", { ignoreBOM: true });
 
@@ -368,12 +372,17 @@ function parseEnv(envStr){
   const u = decodeEnv(envStr);
   if (u.length < 1 + 32 + 12 + 16) throw new Error("Envelope is truncated or malformed.");
   if (u[0] !== VER) throw new Error("Unknown envelope version: " + u[0] + " — this page only reads v1.");
-  return { ephPub: u.slice(1, 33), iv: u.slice(33, 45), ct: u.slice(45) };
+  const ephPub = u.slice(1, 33);
+  if (isLowOrderPub(ephPub))
+    throw new Error("Envelope's sender key is invalid (zero shared secret).");
+  return { ephPub, iv: u.slice(33, 45), ct: u.slice(45) };
 }
 async function encryptTo(recipPubRaw, plaintext){
   if (!(plaintext instanceof Uint8Array))
     throw new Error("Plaintext must be raw bytes (Uint8Array) — encode text with TE.encode().");
   const recipKey = await importPub(recipPubRaw);
+  if (isLowOrderPub(recipPubRaw))
+    throw new Error("Recipient public key is invalid (zero shared secret).");
   // Ephemeral keypair stays non-extractable inside WebCrypto: the private
   // scalar is never exported, imported, or visible to page script.
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
@@ -458,10 +467,12 @@ function parseRecord(rec){
     throw new Error("Not an ecdh.html v1 key record.");
   if (rec.kdf !== "PBKDF2-HMAC-SHA256" || rec.cipher !== "AES-256-GCM")
     throw new Error("Record uses an unsupported KDF/cipher.");
+  if (typeof rec.salt !== "string" || typeof rec.iv !== "string" || typeof rec.ct !== "string")
+    throw new Error("Record is corrupted (bad base64 fields).");
+  if (rec.salt.length > 256 || rec.iv.length > 256 || rec.ct.length > 512)
+    throw new Error("Record is corrupted (bad field sizes).");
   let salt, iv, ct;
   try {
-    if (typeof rec.salt !== "string" || typeof rec.iv !== "string" || typeof rec.ct !== "string")
-      throw new Error("bad base64 fields");
     salt = b64dec(rec.salt); iv = b64dec(rec.iv); ct = b64dec(rec.ct);
   } catch { throw new Error("Record is corrupted (bad base64 fields)."); }
   const iter = typeof rec.iter === "number" && Number.isFinite(rec.iter) ? Math.trunc(rec.iter) : 0;
@@ -515,6 +526,15 @@ function isLowOrderPub(u8){
   masked[31] &= 0x7f;
   return LOW_ORDER_X25519.has(hex(masked));
 }
+/* RFC 7748 canonical X25519 u-coordinates are in [0, 2^255 - 20]. Values with
+ * bit 255 set or in [2^255 - 19, 2^255 - 1] can never be output by X25519(k, 9). */
+function isNonCanonicalPub(u8){
+  if (!(u8 instanceof Uint8Array) || u8.length !== 32) return true;
+  if (u8[31] & 0x80) return true;
+  if (u8[31] !== 0x7f) return false;
+  for (let i = 1; i < 31; i++) if (u8[i] !== 0xff) return false;
+  return u8[0] >= 0xed;
+}
 function cleanContactName(raw){
   if (typeof raw !== "string") return "friend";
   const s = raw.normalize("NFC").replace(/[\p{Cc}\p{Cf}]+/gu, "").replace(/\s+/g, " ").trim().slice(0, 80);
@@ -540,8 +560,8 @@ function contactsFromImport(list){
     let pubBytes;
     try { pubBytes = pubDec(rawPub); }
     catch { throw new Error("Contact #" + (i + 1) + " has an invalid hex public key (expected 64 hex chars)."); }
-    if (isLowOrderPub(pubBytes))
-      throw new Error("Contact #" + (i + 1) + " has an invalid (low-order) public key.");
+    if (isLowOrderPub(pubBytes) || isNonCanonicalPub(pubBytes))
+      throw new Error("Contact #" + (i + 1) + " has an invalid (low-order or non-canonical) public key.");
     const pubHex = pubEnc(pubBytes);
     const name = cleanContactName(c.name);
     byPub.set(pubHex, { name, pub: pubHex });
@@ -652,7 +672,7 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     hex, pubEnc, pubDec, cat, isZero, TE, TD,
     CODECS, encodeEnv, decodeEnv, parseEnv,
     INFO, VER, PBKDF2_ITER,
-    PKCS8_X25519, X25519_BASE, LOW_ORDER_X25519, isLowOrderPub, cleanContactName,
+    PKCS8_X25519, X25519_BASE, LOW_ORDER_X25519, isLowOrderPub, isNonCanonicalPub, cleanContactName,
     EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
     parseRecord, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };

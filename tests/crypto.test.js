@@ -23,13 +23,15 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("node:fs");
+const path = require("node:path");
 const nc = require("node:crypto");
 
 /* ---- the core, required directly (the same bytes the browser loads) ---- */
 const core = require("../crypto.js");
 
 const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
-        LOW_ORDER_X25519, isLowOrderPub, cleanContactName,
+        LOW_ORDER_X25519, isLowOrderPub, isNonCanonicalPub, cleanContactName,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv, parseEnv,
         genKeyPair, importPriv, importPub, x25519, pubFromPriv, x25519Supported, encryptTo, decryptWith,
@@ -255,8 +257,24 @@ async function makeRecord(priv, pub, pass, iter){
     const badEnv = new Uint8Array(1 + 32 + 12 + 16);
     badEnv[0] = VER;
     badEnv.set(badPub, 1);
+    assert.throws(() => parseEnv(encodeEnv(badEnv)), /invalid|zero/i,
+      "parseEnv rejects low-order ephemeral sender key before PBKDF2 " + hVec.slice(0, 8));
     await assert.rejects(decryptWith(priv, pub, encodeEnv(badEnv)), /invalid|zero|agreement/i,
       "decryptWith rejects low-order ephemeral sender key " + hVec.slice(0, 8));
+  }
+  assert.strictEqual(isNonCanonicalPub(pub), false, "generated public key is canonical");
+  assert.strictEqual(isNonCanonicalPub(pubDec("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f")), false,
+    "2^255 - 20 is canonical (though low-order)");
+  for (const ncHex of [
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p = 2^255 - 19
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p + 1
+    "efffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // p + 2
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", // 2^255 - 1
+    "0900000000000000000000000000000000000000000000000000000000000080", // u=9 with top bit 255 set
+  ]){
+    assert.strictEqual(isNonCanonicalPub(pubDec(ncHex)), true, "isNonCanonicalPub flags " + ncHex.slice(0, 8));
+    assert.throws(() => contactsFromImport([{ name: "NonCanon", pub: ncHex }]), /non-canonical|low-order|invalid/i,
+      "contactsFromImport rejects non-canonical key " + ncHex.slice(0, 8));
   }
   await assert.rejects(encryptTo(new Uint8Array(32), "x"), /raw bytes|Uint8Array/i,
     "plaintext must be raw bytes, not a string");
@@ -320,6 +338,8 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 100000001 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 4294967297 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: 123 }), /bad base64/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, salt: "A".repeat(400) }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, ct: "A".repeat(600) }), /bad field sizes/i);
   await assert.rejects(wrapScalar("", priv, 1500), /non-empty string/i);
   await assert.rejects(wrapScalar(null, priv, 1500), /non-empty string/i);
   await assert.rejects(wrapScalar("pass", new Uint8Array(16), 1500), /32 bytes/i);
@@ -461,6 +481,44 @@ async function makeRecord(priv, pub, pass, iter){
   assert.deepStrictEqual(
     checkRuntime("CustomAgent/1.0"),
     { kind: "browser", label: "unrecognized browser" }, "unknown user agent flagged");
+
+  /* 10. static asset, CSP, and security header integrity */
+  const rootDir = path.resolve(__dirname, "..");
+  const html = fs.readFileSync(path.join(rootDir, "index.html"), "utf8");
+  const swJs = fs.readFileSync(path.join(rootDir, "sw.js"), "utf8");
+  const headersTxt = fs.readFileSync(path.join(rootDir, "_headers"), "utf8");
+
+  assert.ok(!html.includes("\r\n"), "index.html must use LF line endings so the CSP script hash is stable");
+  assert.ok(/<html\b[^>]*\btranslate="no"/i.test(html), "index.html <html> disables browser cloud auto-translate");
+  assert.ok(/<meta\s+name="google"\s+content="notranslate"/i.test(html), "index.html includes google notranslate meta");
+  const cspMatch = html.match(/<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"/i);
+  assert.ok(cspMatch, "index.html includes CSP meta tag");
+  const csp = cspMatch[1];
+  assert.ok(csp.includes("default-src 'none'"), "CSP sets default-src 'none'");
+  assert.ok(csp.includes("connect-src 'none'"), "CSP sets connect-src 'none'");
+  assert.ok(!/script-src[^;]*'unsafe-inline'/i.test(csp), "CSP script-src does not allow 'unsafe-inline'");
+  const inlineMatch = html.match(/<script src="crypto\.js"><\/script>\s*<script>([\s\S]*?)<\/script>/);
+  assert.ok(inlineMatch, "index.html contains the inline UI script");
+  const expectedScriptHash = "'sha256-" + nc.createHash("sha256").update(inlineMatch[1], "utf8").digest("base64") + "'";
+  assert.ok(csp.includes(expectedScriptHash),
+    "CSP script-src must pin the inline <script> hash (expected " + expectedScriptHash + ")");
+  assert.ok(!/\.innerHTML\s*=/.test(inlineMatch[1]), "inline UI script avoids .innerHTML assignments");
+
+  const assetsMatch = swJs.match(/const\s+ASSETS\s*=\s*(\[[^\]]+\])/);
+  assert.ok(assetsMatch, "sw.js defines ASSETS array");
+  for (const rel of JSON.parse(assetsMatch[1])){
+    const target = rel === "./" ? "index.html" : rel.replace(/^\.\//, "");
+    assert.ok(fs.existsSync(path.join(rootDir, target)), "sw.js asset exists on disk: " + rel);
+  }
+  for (const requiredHeader of [
+    "Content-Security-Policy: frame-ancestors 'none'",
+    "X-Frame-Options: DENY",
+    "X-Content-Type-Options: nosniff",
+    "Referrer-Policy: no-referrer",
+    "Cross-Origin-Opener-Policy: same-origin",
+  ]){
+    assert.ok(headersTxt.includes(requiredHeader), "_headers includes " + requiredHeader);
+  }
 
   console.log("ALL CRYPTO-CORE CROSS-CHECKS PASSED");
 })().catch((err) => { console.error("FAIL:", err && err.message ? err.message : err); process.exit(1); });

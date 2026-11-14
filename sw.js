@@ -2,7 +2,7 @@
 // ecdh.html service worker — cache-first app shell.
 // Bump CACHE version whenever any file below (or index.html) changes.
 const CACHE_PREFIX = "ecdh-html-";
-const CACHE = CACHE_PREFIX + "v1-20261115050000";
+const CACHE = CACHE_PREFIX + "v1-20261115060000";
 const ASSETS = ["./", "./index.html", "./crypto.js", "./manifest.json", "./icon.svg"];
 const ASSET_URLS = new Set(ASSETS.map((u) => new URL(u, self.location).href));
 
