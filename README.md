@@ -132,7 +132,7 @@ node tests/crypto.test.js
 > Ideally, exchange public keys while you still have a trusted channel. If all trusted channels are already gone and you have to pass public keys over an untrusted channel, verify them over a **real-time voice call**. A voice call may be monitored or recorded, but tampering with a live friend's voice in real time is much harder.
 
 1. Over a voice call, agree on when and how you will use this system (for example: *"If our group chat gets shut down, we'll coordinate here"*).
-2. Each person opens the page **on their own device** and reads aloud the **12-emoji fingerprint** displayed beneath their own public key.
+2. Each person opens the page **on their own device** and reads aloud the **12-emoji fingerprint** (using the English label shown under each emoji) displayed beneath their own public key.
 3. The other person checks those 12 emojis against the fingerprint shown for that contact on their screen. Verify in **both directions**.
 4. Treat unexpected encrypted messages outside agreed times (or from unverified keys) with suspicion — this operational check is what substitutes for cryptographic sender signatures.
 5. Never skip or delegate the fingerprint check. If you cannot verify a key's fingerprint, messages remain confidential against passive eavesdroppers, but **you have no guarantee of who sits on the other end**.
@@ -273,16 +273,16 @@ key = HKDF-SHA256(ikm  = ss,
 
 #### Public key fingerprint
 
-The canonical fingerprint is the full 32-byte lowercase hex **SHA-256 digest of the raw 32-byte public key**. In addition, the UI renders the first 72 bits of that digest as **12 emojis** (6 bits per emoji from a fixed 64-emoji table) for easy voice comparison.
+The canonical fingerprint is the full 32-byte lowercase hex **SHA-256 digest of the raw 32-byte public key**. In addition, the UI renders the first 72 bits of that digest as **12 emojis paired with unambiguous English labels** (6 bits per entry from a fixed 64-entry table) in a 12-tile grid for easy voice comparison.
 
 Exact emoji mapping for implementers:
 Let `v` be the 72-bit big-endian integer formed by bytes `0..8` of `SHA-256(pub)`. Repeat 12 times for `i = 0..11`:
-`emoji[i] = EMOJI[v mod 64]`, `v = floor(v / 64)`.
-The **leftmost** emoji represents the *least*-significant 6 bits of the 72-bit prefix. `EMOJI` is the 64-entry array in `crypto.js`.
+`idx = v mod 64`, `emoji[i] = EMOJI[idx]`, `name[i] = EMOJI_NAMES[idx]`, `v = floor(v / 64)`.
+The **first** (top-left) entry represents the *least*-significant 6 bits of the 72-bit prefix. `EMOJI` and `EMOJI_NAMES` are the 64-entry arrays in `crypto.js`.
 
 Test vector (32-byte all-zero public key):
 - SHA-256 hex: `66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925`
-- 12-emoji fingerprint: `🌲 🦁 🎩 🌋 🐙 🌊 🎵 🐯 🥑 🌊 🐰 🧊`
+- 12-emoji fingerprint: `🌲 Pine` · `🦁 Lion` · `🎩 Hat` · `🌋 Volcano` · `🐙 Octopus` · `🌊 Wave` · `🎵 Music` · `🐯 Tiger` · `🥑 Avocado` · `🌊 Wave` · `🐰 Rabbit` · `🧊 Ice`
 
 #### Private key wrapper format (`localStorage` and backup JSON)
 

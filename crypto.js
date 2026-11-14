@@ -471,13 +471,23 @@ const EMOJI = ["🍎","🍌","🐻","🐝","🚲","🐦","⛵","🎂","🐱","�
   "🐘","👀","🦊","🐸","🍇","🎸","🐹","🎩","🏠","🧊","🧥","🪁","🍋","🦁","🥭","🎵",
   "🐭","🌊","🐙","🦉","🐧","🍕","🐰","🚀","🐑","🐌","🌻","🐯","🌲","🦄","🎻",
   "🌋","🍉","🐋","🦓","⚓","🍺","🧲","🌽","🍯","🐍","🌴","🥑","🐛","🥨","🦇","🍁","🐢"];
+const EMOJI_NAMES = ["Apple","Banana","Bear","Bee","Bike","Bird","Sailboat","Cake","Cat","Cactus","Crocodile","Moon","Coffee","Dice","Dolphin","Egg",
+  "Elephant","Eyes","Fox","Frog","Grapes","Guitar","Hamster","Hat","House","Ice","Jacket","Kite","Lemon","Lion","Mango","Music",
+  "Mouse","Wave","Octopus","Owl","Penguin","Pizza","Rabbit","Rocket","Sheep","Snail","Sunflower","Tiger","Pine","Unicorn","Violin",
+  "Volcano","Watermelon","Whale","Zebra","Anchor","Beer","Magnet","Corn","Honey","Snake","Palm","Avocado","Caterpillar","Pretzel","Bat","Maple","Turtle"];
 async function fpOf(pubRaw){
   const d = await sha256(pubRaw);
   let v = 0n;
   for (let i = 0; i < 9; i++) v = (v << 8n) | BigInt(d[i]);
-  const em = [];
-  for (let i = 0; i < 12; i++){ em.push(EMOJI[Number(v & 63n)]); v >>= 6n; }
-  return { emoji: em.join(" "), hexs: hex(d) };
+  const em = [], names = [], items = [];
+  for (let i = 0; i < 12; i++){
+    const idx = Number(v & 63n);
+    em.push(EMOJI[idx]);
+    names.push(EMOJI_NAMES[idx]);
+    items.push({ emoji: EMOJI[idx], name: EMOJI_NAMES[idx] });
+    v >>= 6n;
+  }
+  return { emoji: em.join(" "), names, items, hexs: hex(d) };
 }
 
 /* ---------- runtime environment inspection ---------- */
@@ -547,7 +557,7 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     hex, pubEnc, pubDec, cat, isZero, TE, TD,
     CODECS, encodeEnv, decodeEnv,
     INFO, VER, PBKDF2_ITER,
-    PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
+    PKCS8_X25519, X25519_BASE, EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
     unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };
 }

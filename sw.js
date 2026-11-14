@@ -1,6 +1,6 @@
 // ecdh.html service worker — cache-first app shell.
 // Bump CACHE version whenever any file below (or index.html) changes.
-const CACHE = "ecdh-html-v1-20261114213000";
+const CACHE = "ecdh-html-v1-20261114220000";
 const ASSETS = ["./", "./index.html", "./crypto.js", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (e) => {

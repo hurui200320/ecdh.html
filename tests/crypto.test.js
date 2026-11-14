@@ -27,7 +27,7 @@ const nc = require("node:crypto");
 /* ---- the core, required directly (the same bytes the browser loads) ---- */
 const core = require("../crypto.js");
 
-const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
+const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
@@ -225,16 +225,32 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(decryptWith(other.priv, other.pub, encodeEnv(env)), /Decryption failed/i,
     "wrong recipient key must fail");
 
-  /* 5. fingerprint = sha256 -> 72 bits -> 12 emoji, LSB-first */
+  /* 5. fingerprint = sha256 -> 72 bits -> 12 emoji + English names, LSB-first */
   const fp = await fpOf(pub);
   const h = nc.createHash("sha256").update(Buffer.from(pub)).digest();
   assert.strictEqual(fp.hexs, h.toString("hex"), "hex fingerprint = lowercase sha256(pub)");
   let v = 0n;
   for (let i = 0; i < 9; i++) v = (v << 8n) | BigInt(h[i]);
-  const exp = [];
-  for (let i = 0; i < 12; i++) { exp.push(EMOJI[Number(v & 63n)]); v >>= 6n; }
+  const exp = [], expNames = [], expItems = [];
+  for (let i = 0; i < 12; i++) {
+    const idx = Number(v & 63n);
+    exp.push(EMOJI[idx]);
+    expNames.push(EMOJI_NAMES[idx]);
+    expItems.push({ emoji: EMOJI[idx], name: EMOJI_NAMES[idx] });
+    v >>= 6n;
+  }
   assert.strictEqual(fp.emoji, exp.join(" "), "emoji mapping matches the README formula");
+  assert.deepStrictEqual(fp.names, expNames, "emoji names match the 12 indices");
+  assert.deepStrictEqual(fp.items, expItems, "emoji items pair each emoji with its English name");
   assert.strictEqual(new Set(EMOJI).size, 64, "EMOJI alphabet must have 64 distinct entries");
+  assert.strictEqual(EMOJI_NAMES.length, 64, "EMOJI_NAMES must have 64 entries");
+  assert.strictEqual(new Set(EMOJI_NAMES.map(s => s.toLowerCase())).size, 64, "EMOJI_NAMES must have 64 distinct entries");
+  assert.ok(EMOJI_NAMES.every(s => typeof s === "string" && /^[A-Z][a-z]+$/.test(s)), "every emoji name is a non-empty capitalized word");
+  const zeroFp = await fpOf(new Uint8Array(32));
+  assert.strictEqual(zeroFp.emoji, "🌲 🦁 🎩 🌋 🐙 🌊 🎵 🐯 🥑 🌊 🐰 🧊", "all-zero pub emoji vector");
+  assert.deepStrictEqual(zeroFp.names,
+    ["Pine", "Lion", "Hat", "Volcano", "Octopus", "Wave", "Music", "Tiger", "Avocado", "Wave", "Rabbit", "Ice"],
+    "all-zero pub emoji names vector");
   assert.ok(await x25519Supported(), "X25519 must be available under test");
 
   /* 6. passphrase wrapper: round-trip, rejection, production KDF cost */
