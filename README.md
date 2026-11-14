@@ -240,7 +240,7 @@ Test vectors:
 
 #### Text encoding: Z85 (tag `A`)
 
-Tag `A` encodes the binary envelope using **Z85** (ZeroMQ's base85 variant: 4 bytes → 5 ASCII characters, or 125 characters/bytes per 100 bytes of input, compared to ~133 in Base64). Because every character is single-byte ASCII, Z85 is the most efficient choice when a channel enforces message limits by **byte size** rather than character count. Its alphabet also deliberately omits quotes and backslashes so strings survive JSON, shell, and Markdown contexts unescaped:
+Tag `A` encodes the binary envelope using **Z85** (ZeroMQ's base85 variant: 4 bytes → 5 ASCII characters, or 125 characters/bytes per 100 bytes of input, compared to ~133 in Base64). Because every character is single-byte ASCII, Z85 is the most efficient choice when a channel enforces message limits by **byte size** rather than character count. Its alphabet deliberately omits quotes and backslashes so strings survive JSON strings and single-quoted (`'...'`) shell literals unescaped (when sending over Markdown or chat apps with auto-emoji, wrap the Z85 string in backticks or a code block so characters like `*`, `<`, `[`, or `:)` are not reformatted):
 
 ```
 0-9 a-z A-Z . - : + = ^ ! / * ? & < > ( ) [ ] { } @ % $ #

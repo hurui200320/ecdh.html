@@ -103,9 +103,9 @@ async function makeRecord(priv, pub, pass, iter){
   assert.throws(() => decodeEnv("Z" + z85enc(env)), /tag/i, "unknown tag is rejected");
   assert.throws(() => decodeEnv("😀" + z85enc(env)), /"😀"/, "non-BMP unknown tag formats full codepoint");
   assert.throws(() => decodeEnv(""), /empty/i, "empty input is rejected");
-  assert.throws(() => decodeEnv('A""'), /Z85/i, "bad payload under a valid tag");
-  assert.throws(() => decodeEnv("A#####"), /Z85/i, "5-char group decoding above 32 bits is rejected");
-  assert.throws(() => decodeEnv("A0"), /Z85/i, "a lone tail char is never valid");
+  assert.throws(() => decodeEnv('A""'), /not valid Z85.*alphabet/i, "bad payload under a valid tag includes codec reason");
+  assert.throws(() => decodeEnv("A#####"), /not valid Z85.*32 bits/i, "5-char group decoding above 32 bits is rejected");
+  assert.throws(() => decodeEnv("A0"), /not valid Z85.*1-char tail/i, "a lone tail char is never valid");
   assert.throws(() => encodeEnv(env, "Z"), /tag/i, "unknown tag on encode");
   const parsedEnv = parseEnv(envStr);
   assert.strictEqual(parsedEnv.ephPub.length, 32, "parseEnv extracts 32-byte ephPub");
@@ -211,8 +211,8 @@ async function makeRecord(priv, pub, pass, iter){
     "1-byte tail with padding bits set is rejected");
   assert.throws(() => b4096dec(B4096_TABLE[16] + B4096_TABLE[255] + B4096_PAD2), /canonical/i,
     "2-byte tail with padding bits set is rejected");
-  assert.throws(() => decodeEnv(B4096_TAG + "圼"), /base4096/i,
-    "decodeEnv wraps codec failures under the 賒 tag");
+  assert.throws(() => decodeEnv(B4096_TAG + "圼"), /not valid base4096.*length/i,
+    "decodeEnv wraps codec failures under the 賒 tag with reason");
   // Charset property: none of these common simplified/traditional sensitive
   // words can be spelled with table digits (every char of each is excluded
   // from the table by construction).
@@ -238,10 +238,16 @@ async function makeRecord(priv, pub, pass, iter){
   }
 
   /* 4. failure paths */
+  await assert.rejects(x25519(priv, new Uint8Array(32)), /invalid|zero|agreement/i,
+    "x25519 rejects all-zero public key directly");
   await assert.rejects(encryptTo(new Uint8Array(32), "x"), /raw bytes|Uint8Array/i,
     "plaintext must be raw bytes, not a string");
   await assert.rejects(encryptTo(new Uint8Array(32), new Uint8Array(4)), /invalid|zero|agreement/i,
     "all-zero recipient key must be rejected");
+  await assert.rejects(decryptWith(priv, pubEnc(pub), encodeEnv(env)), /32 bytes/i,
+    "decryptWith rejects string ownPubRaw");
+  await assert.rejects(decryptWith(priv, new Uint8Array(16), encodeEnv(env)), /32 bytes/i,
+    "decryptWith rejects short ownPubRaw");
   const zeroEphEnv = new Uint8Array(1 + 32 + 12 + 16);
   zeroEphEnv[0] = VER;
   await assert.rejects(decryptWith(priv, pub, encodeEnv(zeroEphEnv)), /invalid|zero|agreement/i,
@@ -300,6 +306,12 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 100000001 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 4294967297 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: 123 }), /bad base64/i);
+  await assert.rejects(wrapScalar("", priv, 1500), /non-empty string/i);
+  await assert.rejects(wrapScalar(null, priv, 1500), /non-empty string/i);
+  await assert.rejects(wrapScalar("pass", new Uint8Array(16), 1500), /32 bytes/i);
+  await assert.rejects(wrapScalar("pass", priv, 0), /iteration/i);
+  await assert.rejects(wrapScalar("pass", priv, 1500.5), /iteration/i);
+  await assert.rejects(wrapScalar("pass", priv, 100000001), /iteration/i);
   await assert.rejects(unwrapScalar("x", { ...rec, kdf: "PBKDF2-HMAC-SHA512" }), /unsupported KDF/i);
   assert.strictEqual(PBKDF2_ITER, 800000, "production iteration count is pinned");
   const big = await makeRecord(priv, pub, "another pass", PBKDF2_ITER);

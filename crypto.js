@@ -32,8 +32,9 @@ function b64dec(str){
 }
 /* Z85 (ZeroMQ base85): 4 bytes -> 5 chars, 25% overhead vs base64's 33%.
  * Alphabet is ZeroMQ's: digits + letters + punctuation, chosen to avoid
- * quotes and backslash, so it survives JSON/shell/markdown channels that
- * mangle Ascii85's `"` `'` `\` range. The Z85 spec only defines lengths
+ * quotes and backslash, so it survives JSON strings and single-quoted shell
+ * literals that mangle Ascii85's `"` `'` `\` range (wrap in backticks/code
+ * blocks if sending over Markdown or auto-emoji chats). The Z85 spec only defines lengths
  * divisible by 4; envelope lengths aren't (61 bytes + plaintext), so tails
  * follow the classic Ascii85 convention: encode zero-pads the final group
  * and emits r+1 chars for the last r bytes; decode pads a short final group
@@ -283,7 +284,8 @@ async function genKeyPair(){
   } finally { pk8.fill(0); }
 }
 async function importPriv(rawScalar){
-  if (rawScalar.length !== 32) throw new Error("Private scalar must be exactly 32 bytes.");
+  if (!(rawScalar instanceof Uint8Array) || rawScalar.length !== 32)
+    throw new Error("Private scalar must be exactly 32 bytes.");
   const der = cat(PKCS8_X25519, rawScalar);
   try {
     return await crypto.subtle.importKey("pkcs8", der,
@@ -291,7 +293,8 @@ async function importPriv(rawScalar){
   } finally { der.fill(0); }
 }
 async function importPub(raw){
-  if (raw.length !== 32) throw new Error("Public key must be exactly 32 bytes.");
+  if (!(raw instanceof Uint8Array) || raw.length !== 32)
+    throw new Error("Public key must be exactly 32 bytes.");
   return crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []);
 }
 async function x25519(privScalar, peerPubRaw){
@@ -306,7 +309,8 @@ async function x25519(privScalar, peerPubRaw){
     // empty error; Firefox returns an all-zero secret instead (caught below).
     throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
   }
-  if (out.length !== 32) throw new Error("Unexpected shared secret length.");
+  if (out.length !== 32 || isZero(out))
+    throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
   return out;
 }
 async function pubFromPriv(scalar){ return x25519(scalar, X25519_BASE); }
@@ -358,7 +362,7 @@ function decodeEnv(str){
       : "Envelope is empty (no encoding tag).");
   }
   try { return codec.dec(s.slice(1)); }
-  catch { throw new Error("Envelope is not valid " + codec.name + "."); }
+  catch (e) { throw new Error("Envelope is not valid " + codec.name + " (" + e.message + ")"); }
 }
 function parseEnv(envStr){
   const u = decodeEnv(envStr);
@@ -396,6 +400,8 @@ async function encryptTo(recipPubRaw, plaintext){
   }
 }
 async function decryptWith(privScalar, ownPubRaw, envStr){
+  if (!(ownPubRaw instanceof Uint8Array) || ownPubRaw.length !== 32)
+    throw new Error("Own public key must be exactly 32 bytes (Uint8Array).");
   const { ephPub, iv, ct } = parseEnv(envStr);
   let ss, key;
   try {
@@ -427,6 +433,12 @@ async function aesKeyFromPass(pass, salt, iter, usages){
   } finally { raw.fill(0); }
 }
 async function wrapScalar(pass, scalar, iter){
+  if (typeof pass !== "string" || !pass.length)
+    throw new Error("Passphrase must be a non-empty string.");
+  if (!(scalar instanceof Uint8Array) || scalar.length !== 32)
+    throw new Error("Private scalar must be exactly 32 bytes.");
+  if (!Number.isInteger(iter) || iter < 1 || iter > MAX_PBKDF2_ITER)
+    throw new Error("Invalid PBKDF2 iteration count.");
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const k = await aesKeyFromPass(pass, salt, iter, ["encrypt"]);

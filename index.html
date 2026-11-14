@@ -187,7 +187,6 @@
       letter-spacing:.04em;
     }
     .card-body{ padding:16px; }
-    textarea{ font-size:16px; }
   }
   .card h2{
     font-size:1.02rem; font-weight:700;
@@ -234,6 +233,9 @@
     color:var(--ink); background:var(--surface);
     border:1px solid var(--line); border-radius:0;
     padding:12px; resize:vertical; display:block;
+  }
+  @media (max-width: 719px){
+    textarea{ font-size:16px; }
   }
   textarea[readonly]{ color:var(--muted); }
   input[type=password]:focus, input[type=text]:focus, select:focus, textarea:focus{
@@ -432,8 +434,8 @@
         <p class="hint">Paste the exported JSON backup, or open the file below. The record itself is passphrase-encrypted; the passphrase is asked here to verify it.</p>
       </div>
       <div class="card-body">
-        <textarea id="imp-json" rows="5" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
-        <input type="file" id="imp-file" accept=".json,application/json">
+        <textarea id="imp-json" rows="5" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted key backup JSON" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
+        <input type="file" id="imp-file" accept=".json,application/json" aria-label="Select key backup JSON file">
         <label for="imp-pass">Passphrase</label>
         <input type="password" id="imp-pass" autocomplete="off">
         <button id="btn-import" type="button">Restore key</button>
@@ -537,7 +539,7 @@
         <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
         <label for="imp-contacts-json">Import contacts (JSON array)</label>
         <textarea id="imp-contacts-json" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
-        <input type="file" id="imp-contacts-file" accept=".json,application/json">
+        <input type="file" id="imp-contacts-file" accept=".json,application/json" aria-label="Select contacts JSON file">
         <button id="btn-import-contacts" type="button">Import contacts</button>
         <div id="imp-contacts-err" class="err" hidden></div>
       </details>
@@ -550,7 +552,7 @@
       <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
     </div>
     <div class="card-body">
-      <textarea id="msg" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Message to encrypt…"></textarea>
+      <textarea id="msg" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Message to encrypt" placeholder="Message to encrypt…"></textarea>
       <div class="codec-row">
         <label for="codec-sel">Output format</label>
         <select id="codec-sel" aria-label="Envelope text encoding">
@@ -559,7 +561,7 @@
         </select>
       </div>
       <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
-      <textarea id="env-out" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" readonly hidden></textarea>
+      <textarea id="env-out" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted envelope" readonly hidden></textarea>
       <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
       <button id="btn-clear-msg" type="button" hidden>Clear</button>
       <div id="enc-err" class="err" hidden></div>
@@ -576,12 +578,12 @@
     </div>
     <div class="card-body">
       <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
-      <textarea id="env-in" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
+      <textarea id="env-in" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Envelope to decrypt" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
       <label for="dec-pass">Passphrase</label>
       <input type="password" id="dec-pass" autocomplete="off">
       <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
       <div id="dec-err" class="err" hidden></div>
-      <textarea id="plain-out" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="(empty message)" readonly hidden></textarea>
+      <textarea id="plain-out" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Decrypted message" placeholder="(empty message)" readonly hidden></textarea>
       <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
       <button id="btn-clear-plain" type="button" hidden>Clear</button>
     </div>
@@ -774,6 +776,17 @@ let OWN_PUB = null;   // Uint8Array(32)
 let CONTACTS = [];    // [{name, pub}]
 let LAST_PUB = null;  // hex string or null
 let WIPE_ARMED = false, WIPE_TIMER = 0;
+let DEL_ARMED = false, DEL_TIMER = 0;
+
+function disarmDelContact(){
+  clearTimeout(DEL_TIMER);
+  DEL_ARMED = false;
+  const b = $("#btn-del-contact");
+  if (b){
+    b.classList.remove("armed");
+    b.textContent = "Remove selected contact";
+  }
+}
 
 function saveRecord(){
   try { localStorage.setItem(LS_KEY, JSON.stringify(RECORD)); }
@@ -846,6 +859,7 @@ function renderDecryptPre(){
 }
 
 async function renderContacts(){
+  disarmDelContact();
   const sel = $("#contact-sel");
   const has = CONTACTS.length > 0;
   $("#btn-export-contacts").disabled = !has;
@@ -960,7 +974,7 @@ $("#btn-import").addEventListener("click", async (e) => {
   let rec;
   try { rec = JSON.parse($("#imp-json").value); }
   catch { return showErr(err, "Not valid JSON — paste the exported backup record or use the file button."); }
-  if (!rec || typeof rec !== "object")
+  if (!rec || typeof rec !== "object" || Array.isArray(rec))
     return showErr(err, "That JSON is not an ecdh.html key record (expected an object).");
   const pass = $("#imp-pass").value;
   if (!pass) return showErr(err, "Enter the passphrase for this record.");
@@ -1101,6 +1115,7 @@ $("#btn-wipe").addEventListener("click", async (e) => {
   $("#gen-pass").value = $("#gen-pass2").value = ""; $("#gen-warn").hidden = true; hideErr($("#gen-err"));
   $("#imp-json").value = ""; $("#imp-file").value = ""; $("#imp-pass").value = ""; hideErr($("#imp-err"));
   $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = ""; $("#ch-warn").hidden = true; hideErr($("#ch-err"));
+  for (const d of $$("#setup-have details")) d.open = false;
   clearPlain(); $("#env-in").value = ""; hideErr($("#dec-err"));
   clearMsg();
   if (wipeAll){
@@ -1169,6 +1184,7 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
 });
 
 $("#contact-sel").addEventListener("change", () => {
+  disarmDelContact();
   const idx = Number.parseInt($("#contact-sel").value, 10);
   const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (c){
@@ -1180,10 +1196,20 @@ $("#contact-sel").addEventListener("change", () => {
   showSelFp();
 });
 
-$("#btn-del-contact").addEventListener("click", async () => {
+$("#btn-del-contact").addEventListener("click", async (e) => {
+  const b = e.currentTarget;
   const sel = $("#contact-sel");
   const idx = Number.parseInt(sel.value, 10);
   if (!Number.isInteger(idx) || idx < 0 || idx >= CONTACTS.length) return;
+  if (!DEL_ARMED){
+    DEL_ARMED = true;
+    b.classList.add("armed");
+    b.textContent = "Confirm: remove contact?";
+    clearTimeout(DEL_TIMER);
+    DEL_TIMER = setTimeout(disarmDelContact, 6000);
+    return;
+  }
+  disarmDelContact();
   hideErr($("#contacts-warn"));
   CONTACTS.splice(idx, 1);
   clearStaleEnv();
@@ -1250,7 +1276,9 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   const idx = Number.parseInt($("#contact-sel").value, 10);
   const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (!c) return showErr(err, "Pick a contact first.");
-  if (!$("#msg").value) return showErr(err, "Enter a message to encrypt.");
+  const msgText = $("#msg").value;
+  if (!msgText) return showErr(err, "Enter a message to encrypt.");
+  const codecTag = $("#codec-sel").value;
   let pub;
   try { pub = pubDec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").value = "";
@@ -1261,8 +1289,9 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   btn.disabled = true; btn.textContent = "Encrypting…";
   let ptBytes = null;
   try {
-    ptBytes = TE.encode($("#msg").value);
-    const env = encodeEnv(await encryptTo(pub, ptBytes), $("#codec-sel").value);
+    ptBytes = TE.encode(msgText);
+    const env = encodeEnv(await encryptTo(pub, ptBytes), codecTag);
+    if ($("#msg").value !== msgText || CONTACTS[Number.parseInt($("#contact-sel").value, 10)] !== c) return;
     $("#env-out").value = env;
     $("#env-out").hidden = false;
     $("#btn-copy-env").hidden = false;
@@ -1272,7 +1301,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   } catch (ex){ showErr(err, ex.message || "Encryption failed."); }
   finally {
     if (ptBytes) ptBytes.fill(0);
-    btn.disabled = false; btn.textContent = "Encrypt";
+    btn.disabled = !CONTACTS.length; btn.textContent = "Encrypt";
   }
 });
 
@@ -1311,17 +1340,17 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   try {
     parseEnv(env);
     scalar = await unwrapScalar(pass, targetRec);
-    if (RECORD !== targetRec) return;
+    if (RECORD !== targetRec || $("#env-in").value !== env) return;
     ptBytes = await decryptWith(scalar, ownPub, env);
-    if (RECORD !== targetRec) return;
+    if (RECORD !== targetRec || $("#env-in").value !== env) return;
     const text = TD.decode(ptBytes);
     $("#plain-out").value = text;
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;
     $("#btn-clear-plain").hidden = false;
-    $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
+    if ($("#dec-pass").value === pass) $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
   } catch (ex){
-    if (RECORD === targetRec) showErr(err, ex.message || "Decryption failed.");
+    if (RECORD === targetRec && $("#env-in").value === env) showErr(err, ex.message || "Decryption failed.");
   }
   finally {
     ownPub.fill(0);
@@ -1336,7 +1365,7 @@ $("#btn-clear-plain").addEventListener("click", clearPlain);
 
 for (const [inp, btn] of [["#gen-pass2", "#btn-generate"], ["#imp-pass", "#btn-import"], ["#ch-new2", "#btn-chpass"], ["#dec-pass", "#btn-decrypt"]])
   $(inp).addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !$(btn).disabled){ e.preventDefault(); $(btn).click(); }
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !$(btn).disabled){ e.preventDefault(); $(btn).click(); }
   });
 
 /* ---------- boot ---------- */
