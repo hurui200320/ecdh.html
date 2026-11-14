@@ -1,0 +1,13 @@
+{
+  "name": "ecdh.html — encrypted text",
+  "short_name": "ecdh.html",
+  "description": "Emergency encrypted text: X25519 + HKDF + AES-256-GCM, fully offline, zero dependencies.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090e17",
+  "theme_color": "#090e17",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
