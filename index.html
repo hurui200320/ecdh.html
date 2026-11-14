@@ -13,12 +13,14 @@
   :root{
     --bg:#f2f5f9; --card:#ffffff; --ink:#101828; --muted:#667085;
     --accent:#2563eb; --accent-ink:#ffffff; --danger:#dc2626; --ok:#059669;
+    --warn:#b45309; --warnbg:#fffbeb;
     --line:#e0e6ef; --errbg:#fef2f2; --radius:14px;
   }
   @media (prefers-color-scheme: dark){
     :root{
       --bg:#0b1220; --card:#111a2c; --ink:#e6edf8; --muted:#8b98ad;
       --accent:#3b82f6; --accent-ink:#ffffff; --danger:#f87171; --ok:#34d399;
+      --warn:#fbbf24; --warnbg:#291f07;
       --line:#22303f; --errbg:#2a1214;
     }
   }
@@ -38,7 +40,7 @@
   }
   .card h2{ font-size:1.02rem; margin:0 0 10px; }
   .hint{ color:var(--muted); font-size:.85rem; margin:.4rem 0 .8rem; }
-  .warn{ color:#b45309; font-size:.85rem; margin:.5rem 0; }
+  .warn{ color:var(--warn); font-size:.85rem; margin:.5rem 0; }
   .err{ color:var(--danger); background:var(--errbg); border-radius:10px; padding:10px 12px; margin:.6rem 0; font-size:.9rem; }
   label{ display:block; font-size:.85rem; color:var(--muted); margin:.9rem 0 .3rem; }
   input[type=password], input[type=text]{
@@ -81,6 +83,8 @@
   footer{ color:var(--muted); font-size:.75rem; text-align:center; margin-top:28px; }
   .ctx-banner{ background:var(--errbg); color:var(--danger); border-radius:var(--radius);
     padding:14px 16px; margin:14px 0; font-size:.9rem; }
+  .rt-banner{ background:var(--warnbg); color:var(--warn); border:1px solid var(--warn);
+    border-radius:var(--radius); padding:14px 16px; margin:14px 0; font-size:.9rem; }
   .help ul{ margin:.4rem 0 .8rem; padding-left:1.2rem; }
   .help li{ margin:.3rem 0; }
   .help .ok{ color:var(--ok); }
@@ -105,6 +109,11 @@
   <span id="ctx-warn-msg">This page only works in a secure context: served over HTTPS,
   from <code>localhost</code>, or opened as a local file (<code>file://</code>).
   Buttons are disabled.</span>
+</div>
+
+<div id="rt-warn" class="rt-banner" hidden>
+  <b id="rt-warn-title"></b>
+  <span id="rt-warn-msg"></span>
 </div>
 
 <nav id="tabs" role="tablist">
@@ -288,6 +297,7 @@
       <li class="no">Replay — an old but genuine message can be re-sent to you</li>
       <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
       <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code></li>
+      <li class="no">In-app browsers (WebViews), non-standard browsers, &amp; extensions — chat-app WebViews and extensions/userscripts (e.g. Tampermonkey, auto-translate, AI sidebars) can read the page DOM and steal passphrases or plaintext</li>
       <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
       <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
       <li class="no">Forward secrecy against later key theft — history falls if the private key falls</li>
@@ -308,6 +318,7 @@
     <ul>
       <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML).</li>
       <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
+      <li>Always open this page in standalone Firefox, Chrome, Edge, or Safari — <b>never</b> inside a chat app's built-in browser/WebView — and disable browser extensions (Tampermonkey, translation plugins, AI sidebars) on this page.</li>
       <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
       <li>Never paste plaintext or the private key into any chat. Only envelopes and public keys.</li>
       <li>If adversaries upgrade to targeted nation-state: stop, use Signal/GPG/in person instead.</li>
@@ -782,6 +793,16 @@ for (const b of $$("#tabs .tabbtn"))
   b.addEventListener("click", () => showTab(b.dataset.tab));
 
 (async function boot(){
+  const rt = checkRuntime(navigator.userAgent, window);
+  if (rt){
+    $("#rt-warn-title").textContent = rt.kind === "webview"
+      ? "Untrusted in-app browser detected (" + rt.label + "). "
+      : "Non-standard browser detected (" + rt.label + "). ";
+    $("#rt-warn-msg").textContent = rt.kind === "webview"
+      ? "The host app can inspect or modify everything inside its built-in WebView (including your passphrase and decrypted messages), and WebView storage may be cleared at any time. Tap the menu and open this page in standalone Firefox, Chrome, Edge, or Safari instead."
+      : "Some third-party or OEM browsers include cloud content inspection or script injection. For sensitive use, open this page in standalone Firefox, Chrome, Edge, or Safari with browser extensions (such as Tampermonkey or translation plugins) disabled.";
+    $("#rt-warn").hidden = false;
+  }
   const bail = (title, msg) => {
     $("#ctx-warn-title").textContent = title;
     $("#ctx-warn-msg").textContent = msg;

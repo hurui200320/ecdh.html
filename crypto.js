@@ -480,6 +480,66 @@ async function fpOf(pubRaw){
   return { emoji: em.join(" "), hexs: hex(d) };
 }
 
+/* ---------- runtime environment inspection ---------- */
+/* Heuristic check for in-app WebViews (chat/social apps that can inject JS or
+ * read DOM/storage) and non-standard/cloud-telemetry browsers. Returns null
+ * for standard standalone browsers (Firefox, Chrome/Chromium, Edge, Safari),
+ * or { kind: "webview" | "browser", label } when a risky runtime is spotted. */
+const WEBVIEW_RULES = [
+  [/MicroMessenger\//i, "WeChat in-app WebView"],
+  [/\bQQ\/[\d.]/i, "QQ in-app WebView"],
+  [/DingTalk/i, "DingTalk in-app WebView"],
+  [/Feishu|LarkLocale/i, "Feishu/Lark in-app WebView"],
+  [/AlipayClient/i, "Alipay in-app WebView"],
+  [/\bWeibo\b|__weibo__/i, "Weibo in-app WebView"],
+  [/BytedanceWebview|ByteLocale|Aweme|TikTok/i, "ByteDance/Douyin/TikTok in-app WebView"],
+  [/\b(?:FBAN|FBAV|FB_IAB|Instagram)\b/i, "Meta/Instagram in-app WebView"],
+  [/\bLine\//i, "LINE in-app WebView"],
+  [/\bTelegram(?:Bot|Android|iOS)?\b/i, "Telegram in-app WebView"],
+  [/\bElectron\//i, "Electron embedded WebView"],
+  [/;\s*wv\)|\bwv\b.*Version\/[\d.]+.*Chrome\//i, "Android in-app WebView"],
+];
+const BROWSER_RULES = [
+  [/MQQBrowser|QQBrowser/i, "QQ Browser"],
+  [/UCBrowser|UCWEB|UBrowser/i, "UC Browser"],
+  [/Quark\//i, "Quark Browser"],
+  [/QihooBrowser|360SE|360EE|QIHU/i, "360 Browser"],
+  [/MetaSr|SogouMobileBrowser|SogouMSE/i, "Sogou Browser"],
+  [/2345Explorer|Mb2345Browser/i, "2345 Browser"],
+  [/baiduboxapp|baidubrowser|\bBaidu\b/i, "Baidu Browser"],
+  [/Maxthon/i, "Maxthon Browser"],
+  [/LBBROWSER/i, "Liebao Browser"],
+  [/MiuiBrowser|XiaoMi\//i, "Xiaomi MIUI Browser"],
+  [/HuaweiBrowser|HBPC\//i, "Huawei Browser"],
+  [/HeyTapBrowser|OppoBrowser/i, "OPPO Browser"],
+  [/VivoBrowser/i, "vivo Browser"],
+];
+function checkRuntime(ua, globals){
+  const s = String(ua || "");
+  const g = globals || {};
+  if (g.WeixinJSBridge || g.__wxjs_environment)
+    return { kind: "webview", label: "WeChat in-app WebView" };
+  if (g.AlipayJSBridge)
+    return { kind: "webview", label: "Alipay in-app WebView" };
+  if (g.ReactNativeWebView)
+    return { kind: "webview", label: "in-app WebView" };
+  for (const [re, label] of WEBVIEW_RULES)
+    if (re.test(s)) return { kind: "webview", label };
+  if (/\b(?:iPhone|iPad|iPod)\b/i.test(s) && /AppleWebKit\//i.test(s)
+      && !/\b(?:Safari|CriOS|FxiOS|EdgiOS|OPiOS)\//i.test(s))
+    return { kind: "webview", label: "iOS in-app WebView" };
+  for (const [re, label] of BROWSER_RULES)
+    if (re.test(s)) return { kind: "browser", label };
+  const isKnownStandalone =
+    /\b(?:Firefox|FxiOS)\/[\d.]+/.test(s) ||
+    /\b(?:Edg|EdgA|EdgiOS)\/[\d.]+/.test(s) ||
+    /\b(?:Chrome|CriOS|Chromium)\/[\d.]+/.test(s) ||
+    /\bVersion\/[\d.]+.*\bSafari\/[\d.]+/.test(s);
+  if (!isKnownStandalone)
+    return { kind: "browser", label: "unrecognized browser" };
+  return null;
+}
+
 /* Node export for the test harness; inert in the browser. */
 if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
   module.exports = { b64enc, b64dec, z85enc, z85dec,
@@ -489,5 +549,5 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
-    unwrapScalar, recordFromImport, contactsFromImport, fpOf };
+    unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };
 }

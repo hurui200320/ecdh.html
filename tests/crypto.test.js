@@ -31,7 +31,7 @@ const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, 
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
-        wrapScalar, unwrapScalar, recordFromImport, contactsFromImport, fpOf } = core;
+        wrapScalar, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime } = core;
 
 /* helper: build a wrapper record the way the app does */
 async function makeRecord(priv, pub, pass, iter){
@@ -296,6 +296,38 @@ async function makeRecord(priv, pub, pass, iter){
   assert.throws(() => contactsFromImport([null]), /not an object/i);
   assert.throws(() => contactsFromImport([{ name: "Bob" }]), /missing a 'pub'/i);
   assert.throws(() => contactsFromImport([{ name: "Bob", pub: "not-hex" }]), /invalid hex/i);
+
+  /* 9. runtime WebView / browser detection */
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"),
+    null, "standard desktop Chrome passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0"),
+    null, "standard Firefox passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"),
+    null, "standard iOS Safari passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/133.0.0.0 Mobile/15E148 Safari/604.1"),
+    null, "standard iOS Chrome passes");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.50"),
+    { kind: "webview", label: "WeChat in-app WebView" }, "WeChat UA detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (X11; Linux x86_64) Chrome/133.0.0.0", { WeixinJSBridge: {} }),
+    { kind: "webview", label: "WeChat in-app WebView" }, "WeChat global bridge detected even if UA is spoofed");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36"),
+    { kind: "webview", label: "Android in-app WebView" }, "generic Android WebView (; wv) detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"),
+    { kind: "webview", label: "iOS in-app WebView" }, "generic iOS WKWebView (missing Safari/) detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 QQBrowser/11.9.0"),
+    { kind: "browser", label: "QQ Browser" }, "QQ Browser detected despite Chrome/Safari tokens");
+  assert.deepStrictEqual(
+    checkRuntime("CustomAgent/1.0"),
+    { kind: "browser", label: "unrecognized browser" }, "unknown user agent flagged");
 
   console.log("ALL CRYPTO-CORE CROSS-CHECKS PASSED");
 })().catch((err) => { console.error("FAIL:", err && err.message ? err.message : err); process.exit(1); });
