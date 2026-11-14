@@ -12,7 +12,7 @@
  *   - PBKDF2-HMAC-SHA256 passphrase wrapper (incl. the production 800k cost)
  *   - SHA-256 fingerprint and the 12-emoji (72-bit, LSB-first) mapping
  *   - import validation: pub required, verified, record canonicalized
- *   - envelope text layer: tag dispatch (A = base64), IM whitespace
+ *   - envelope text layer: tag dispatch (A = Z85), IM whitespace
  *     tolerance, unknown/missing tags rejected
  *   - documented failure paths: zero shared secret, tampering, wrong
  *     version, truncated/garbage input, wrong passphrase, corrupt records
@@ -27,7 +27,7 @@ const nc = require("node:crypto");
 /* ---- the core, required directly (the same bytes the browser loads) ---- */
 const core = require("../crypto.js");
 
-const { b64enc, b64dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
+const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
         TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
         wrapScalar, unwrapScalar, recordFromImport, fpOf } = core;
@@ -83,18 +83,56 @@ async function makeRecord(priv, pub, pass, iter){
 
   /* 2b. envelope text layer: TAG || codec(envelope bytes) */
   const envStr = encodeEnv(env);
-  assert.ok(envStr.startsWith("A") && envStr.slice(1) === b64enc(env),
-    "base64 envelopes are tagged 'A' + standard padded base64");
+  assert.ok(envStr.startsWith("A") && envStr.slice(1) === z85enc(env),
+    "envelopes are tagged 'A' + canonical Z85");
   assert.ok(Buffer.from(decodeEnv(envStr)).equals(Buffer.from(env)), "tag round-trip");
-  assert.ok(Buffer.from(decodeEnv("A\n" + b64enc(env))).equals(Buffer.from(env)),
+  assert.ok(Buffer.from(decodeEnv("A\n" + z85enc(env))).equals(Buffer.from(env)),
     "tag may be split from its payload by an IM line-wrap");
   assert.ok(Buffer.from(decodeEnv(" " + envStr.replace(/(.{20})/g, "$1\n"))).equals(Buffer.from(env)),
     "leading whitespace + wrapped payload tolerated");
-  assert.throws(() => decodeEnv("a" + b64enc(env)), /tag/i, "tags are case-sensitive");
-  assert.throws(() => decodeEnv("Z" + b64enc(env)), /tag/i, "unknown tag is rejected");
+  assert.throws(() => decodeEnv("a" + z85enc(env)), /tag/i, "tags are case-sensitive");
+  assert.throws(() => decodeEnv("Z" + z85enc(env)), /tag/i, "unknown tag is rejected");
   assert.throws(() => decodeEnv(""), /empty/i, "empty input is rejected");
-  assert.throws(() => decodeEnv("A!!!"), /base64/i, "bad payload under a valid tag");
+  assert.throws(() => decodeEnv('A""'), /Z85/i, "bad payload under a valid tag");
+  assert.throws(() => decodeEnv("A#####"), /Z85/i, "5-char group decoding above 32 bits is rejected");
+  assert.throws(() => decodeEnv("A0"), /Z85/i, "a lone tail char is never valid");
   assert.throws(() => encodeEnv(env, "Z"), /tag/i, "unknown tag on encode");
+
+  /* 2c. Z85 codec: spec vector, tails, strictness, independent cross-check */
+  // Vector from the ZeroMQ Z85 spec: 0x864FD26FB559F75B <-> "HelloWorld".
+  const spec = new Uint8Array([0x86, 0x4f, 0xd2, 0x6f, 0xb5, 0x59, 0xf7, 0x5b]);
+  assert.strictEqual(z85enc(spec), "HelloWorld", "Z85 spec vector (encode)");
+  assert.ok(Buffer.from(z85dec("HelloWorld")).equals(Buffer.from(spec)), "Z85 spec vector (decode)");
+  // Tails (hand-checked): r trailing bytes -> r+1 chars.
+  assert.strictEqual(z85enc(new Uint8Array([1])), "0r", "1-byte tail");
+  assert.strictEqual(z85enc(new Uint8Array([1, 2])), "0rJ", "2-byte tail");
+  assert.strictEqual(z85enc(new Uint8Array([1, 2, 3])), "0rJu", "3-byte tail");
+  assert.throws(() => z85dec("~~"), /alphabet/i, "chars outside the alphabet are rejected");
+  // Cross-check against an independent BigInt implementation, every tail
+  // shape plus random bulk data, and round-trip each.
+  const refZ85enc = (u8) => {
+    const A = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+    let out = "";
+    for (let i = 0; i < u8.length; i += 4){
+      const take = Math.min(4, u8.length - i);
+      let v = 0n;
+      for (let j = 0; j < 4; j++) v = (v << 8n) | BigInt(j < take ? u8[i + j] : 0);
+      const ds = [];
+      for (let d = 0; d < 5; d++){ ds.unshift(A[Number(v % 85n)]); v /= 85n; }
+      out += ds.slice(0, take + 1).join("");
+    }
+    return out;
+  };
+  for (let len = 0; len <= 64; len++){
+    const raw = new Uint8Array(nc.randomBytes(len));
+    const s = z85enc(raw);
+    assert.strictEqual(s, refZ85enc(raw), "matches the BigInt reference at length " + len);
+    assert.ok(Buffer.from(z85dec(s)).equals(Buffer.from(raw)), "round-trip at length " + len);
+  }
+  const bulk = new Uint8Array(nc.randomBytes(4096));
+  assert.ok(Buffer.from(z85dec(z85enc(bulk))).equals(Buffer.from(bulk)), "4 KiB round-trip");
+  assert.ok(Buffer.from(decodeEnv("A" + z85enc(env).replace(/(.{20})/g, "$1 "))).equals(Buffer.from(env)),
+    "Z85 tolerates stripped IM whitespace");
 
   /* 3. independent OpenSSL decrypt of the envelope (spec recipe) */
   {

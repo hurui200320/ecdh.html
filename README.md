@@ -16,7 +16,7 @@ AES-256-GCM. Browsers do all of it natively via Web Crypto.
 **Designed use case:** the trusted channel dies (for example, server get blocked).
 You and your friends still have *some* internet — an IM, an email, a pastebin —
 but assume that channel is tapped, stored, and actively rewritable. This tool
-turns that channel back into a confidential one by moving tagged base64
+turns that channel back into a confidential one by moving tagged Z85
 envelopes and hex public keys through it. Nothing else.
 
 > Special note: This system need another hard to tamper channel to setup.
@@ -125,7 +125,9 @@ censorship-tolerant, dependency-free, human-ceremony emergency comms.
 
 ## Protocol v1 (byte-exact)
 
-All base64 is standard alphabet **with padding**. All "raw" X25519 keys are the
+Envelope text is **Z85** (ZeroMQ base85 — exact alphabet and tail rule below).
+The JSON key record's binary fields are standard base64 **with padding**. All
+"raw" X25519 keys are the
 usual 32-byte little-endian u-coordinate strings — identical bytes in Web
 Crypto, BouncyCastle, and libsodium.
 
@@ -146,8 +148,8 @@ text form = TAG || codec( 0x01 | ephPub[32] | iv[12] | ciphertext )
 ```
 
 - `TAG` — one char naming the text encoding, so the decoder can tell at a
-  glance how to parse the rest. Today: `A` = base64 (standard alphabet, with
-  padding). Planned: `B` = base85, and a CJK tag for base4096 picked from the
+  glance how to parse the rest. Today: `A` = Z85 (spec below). Planned: a CJK
+  tag for base4096 picked from the
   same visual class as its charset so the whole string blends in. Tags match
   strictly (case-sensitive, no untagged fallback) and are **orthogonal to the
   version byte**: the tag says how the bytes are spelled, `0x01` inside says
@@ -168,6 +170,40 @@ Envelope bytes:
 - No AAD
 - The receiver reconstructs: `ephPub` from the envelope, their own public key
   from their stored record
+
+### Envelope text encoding: Z85
+
+Tag `A` wraps the envelope bytes in **Z85** — ZeroMQ's base85 variant, 4 bytes
+→ 5 chars (25% overhead vs base64's 33%). Its alphabet deliberately avoids
+quotes and backslash, so it survives JSON/shell/markdown channels that mangle
+classic Ascii85's `"` `'` `\` range:
+
+```
+0-9 a-z A-Z . - : + = ^ ! / * ? & < > ( ) [ ] { } @ % $ #
+```
+
+ digit order 0-84 as listed; the string in `crypto.js` (`Z85`) is the normative
+ form.
+
+- Each 4-byte group is read **big-endian** into a 32-bit value, then written
+  as 5 base-85 digits, **most significant first** (`d4` = value / 85⁴).
+- **Tails** (the Z85 spec only defines lengths divisible by 4; envelope
+  lengths are 45 + plaintext, so they happen constantly): the final `r` bytes
+  (r = 1..3) are zero-padded to a full group and only the first `r+1` chars
+  are emitted. Decoding a `k`-char tail (k = 2..4) pads the missing digits
+  with the highest digit `#` (84), decodes, and keeps the first `k−1` bytes.
+  A lone trailing char is never valid.
+- **Strictness:** any character outside the alphabet, any length with a
+  1-char tail, and any 5-char group whose value exceeds 2³²−1 are rejected.
+  Legally encoded tails never overflow 2³²−1, so an overflowing group proves
+  the input is not canonical Z85.
+- Encoders emit one canonical compact string (no wrapping, no shorthand —
+  unlike Ascii85 there is no `z` for zero groups). Decoders strip whitespace
+  before parsing, so IM line-wraps survive.
+
+Spec vector (from the ZeroMQ Z85 definition): the bytes
+`86 4F D2 6F B5 59 F7 5B` encode to `HelloWorld`. Tail vectors: byte `01`
+encodes to `0r`, bytes `01 02` to `0rJ`, bytes `01 02 03` to `0rJu`.
 
 ### Key derivation
 
@@ -376,6 +412,6 @@ cache on your actual host. Everything else works regardless.
 
 ---
 
-*Spec versions in play: envelope `0x01`, text-form tag `A` (base64), wrapper
+*Spec versions in play: envelope `0x01`, text-form tag `A` (Z85), wrapper
 `v:1`, storage keys `.v1`, SW cache `v1`. Change any byte-level behavior = bump
 everything under it and document here.*

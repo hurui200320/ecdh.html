@@ -5,8 +5,8 @@
  * directly under Node). No dependencies; everything is Web Crypto.
  *
  * Protocol: envelope bytes = 0x01 | ephPub[32] | iv[12] | AESGCM ct||tag
- *           text form      = TAG || codec(envelope bytes); tag A = base64
- *                            (planned: B = base85, a CJK tag = base4096)
+ *           text form      = TAG || codec(envelope bytes); tag A = Z85
+ *                            (planned: a CJK tag = base4096)
  *           key = HKDF-SHA256(X25519(eph, recip), salt=ephPub||recipPub,
  *                              info="ecdh.html/v1", 32)
  * Public keys are shared as hex (0-9a-f only — IM software can mangle
@@ -27,6 +27,62 @@ function b64dec(str){
   const bin = atob(clean);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+/* Z85 (ZeroMQ base85): 4 bytes -> 5 chars, 25% overhead vs base64's 33%.
+ * Alphabet is ZeroMQ's: digits + letters + punctuation, chosen to avoid
+ * quotes and backslash, so it survives JSON/shell/markdown channels that
+ * mangle Ascii85's `"` `'` `\` range. The Z85 spec only defines lengths
+ * divisible by 4; envelope lengths aren't (45 bytes + plaintext), so tails
+ * follow the classic Ascii85 convention: encode zero-pads the final group
+ * and emits r+1 chars for the last r bytes; decode pads a short final group
+ * with the highest digit ('#') and keeps the k-1 bytes a k-char tail packs.
+ * Every 5-char group must decode to a value below 2^32 — legal tails never
+ * overflow that, so a bigger value marks the input as non-canonical. */
+const Z85 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+const Z85_REV = (() => {
+  const t = new Int16Array(256).fill(-1);
+  for (let i = 0; i < Z85.length; i++) t[Z85.charCodeAt(i)] = i;
+  return t;
+})();
+function z85enc(u8){
+  const out = [];
+  const push = (b0, b1, b2, b3, keep) => {
+    let n = b0 * 16777216 + b1 * 65536 + b2 * 256 + b3;
+    const digits = new Array(5);
+    for (let d = 4; d >= 0; d--){ digits[d] = Z85[n % 85]; n = Math.floor(n / 85); }
+    for (let d = 0; d < keep; d++) out.push(digits[d]);
+  };
+  let o = 0;
+  for (; o + 4 <= u8.length; o += 4) push(u8[o], u8[o + 1], u8[o + 2], u8[o + 3], 5);
+  const r = u8.length - o;
+  if (r) push(u8[o], r > 1 ? u8[o + 1] : 0, r > 2 ? u8[o + 2] : 0, 0, r + 1);
+  return out.join("");
+}
+function z85dec(str){
+  const len = str.length;
+  const rem = len % 5;
+  if (rem === 1) throw new Error("A 1-char tail carries no bytes; Z85 tails are 2-4 chars.");
+  const groups = (len - rem) / 5;
+  const out = new Uint8Array(groups * 4 + (rem ? rem - 1 : 0));
+  let o = 0;
+  for (let g = 0; g < groups + (rem ? 1 : 0); g++){
+    const present = g < groups ? 5 : rem;   // chars actually in this group
+    let v = 0;
+    for (let d = 0; d < 5; d++){
+      let digit;
+      if (d >= present) digit = 84;         // pad a short tail with '#'
+      else {
+        const c = str.charCodeAt(g * 5 + d);
+        digit = c < 256 ? Z85_REV[c] : -1;
+      }
+      if (digit < 0) throw new Error("Character at position " + (g * 5 + d) + " is not in the Z85 alphabet.");
+      v = v * 85 + digit;
+    }
+    if (v > 4294967295) throw new Error("Z85 group " + g + " decodes above 32 bits (non-canonical input).");
+    const keep = g < groups ? 4 : rem - 1;
+    for (let b = 0; b < keep; b++) out[o++] = Math.floor(v / 2 ** (8 * (3 - b))) % 256;
+  }
   return out;
 }
 function hex(u8){
@@ -123,14 +179,13 @@ async function x25519Supported(){
  * are spelled and is orthogonal to the version byte (0x01) inside, which says
  * what they mean. Tags are matched strictly (case-sensitive, no untagged
  * fallback); all decoders strip whitespace first (IM line-wraps). Table:
- *   A — base64, standard alphabet with padding (today's default)
- *   B — base85 (planned)      <CJK char> — base4096 (planned; the tag is
- *                               chosen from the same visual class so the
- *                               whole string blends in)
+ *   A — Z85 (ZeroMQ base85), canonical compact form (today's default)
+ *   <CJK char> — base4096 (planned; the tag is chosen from the same visual
+ *               class so the whole string blends in)
  * The null prototype keeps pasted first-chars like "constructor" from
  * resolving to inherited properties. */
 const CODECS = Object.assign(Object.create(null),
-  { A: { name: "base64", enc: b64enc, dec: b64dec } });
+  { A: { name: "Z85", enc: z85enc, dec: z85dec } });
 function encodeEnv(u8, tag){
   tag = tag || "A";
   const codec = CODECS[tag];
@@ -260,7 +315,7 @@ async function fpOf(pubRaw){
 
 /* Node export for the test harness; inert in the browser. */
 if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-  module.exports = { b64enc, b64dec, hex, pubEnc, pubDec, cat, isZero, TE, TD,
+  module.exports = { b64enc, b64dec, z85enc, z85dec, hex, pubEnc, pubDec, cat, isZero, TE, TD,
     CODECS, encodeEnv, decodeEnv,
     INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
