@@ -7,6 +7,8 @@
  * Protocol: envelope = base64(0x01 | ephPub[32] | iv[12] | AESGCM ct||tag)
  *           key = HKDF-SHA256(X25519(eph, recip), salt=ephPub||recipPub,
  *                              info="ecdh.html/v1", 32)
+ * Public keys are shared as hex (0-9a-f only — IM software can mangle
+ * base64's alphabet into emoji); envelopes stay base64.
  * See README.md for the pinned threat model and byte-exact spec.
  * ===================================================================== */
 
@@ -23,15 +25,26 @@ function b64dec(str){
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-function b64decSafe(str){
-  const u = b64dec(str);
-  if (u.length !== 32) throw new Error("Expected 32 bytes after base64 decoding.");
-  return u;
-}
 function hex(u8){
   let s = "";
   for (const b of u8) s += b.toString(16).padStart(2, "0");
   return s;
+}
+function hexdec(str){
+  const s = str.replace(/\s+/g, "");
+  if (!/^(?:[0-9a-f]{2})+$/i.test(s)) throw new Error("Not a valid hex string.");
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+/* Public keys travel between humans, so the string form is hex — 0-9a-f
+ * only, nothing an IM can autocorrect into emoji. Canonical form is 64
+ * lowercase chars; decoding also tolerates uppercase and IM line-wraps. */
+function pubEnc(u8){ return hex(u8); }
+function pubDec(str){
+  const u = hexdec(str);
+  if (u.length !== 32) throw new Error("Public key must be 64 hex chars (32 bytes).");
+  return u;
 }
 function cat(...arrs){
   const n = arrs.reduce((a, b) => a + b.length, 0);
@@ -184,12 +197,12 @@ async function unwrapScalar(pass, rec){
 async function recordFromImport(rec, scalar){
   if (!rec || typeof rec !== "object") throw new Error("Not an ecdh.html v1 key record.");
   if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
-  const recPub = b64decSafe(rec.pub);
+  const recPub = pubDec(rec.pub);   // hex; throws on anything else
   const derivedPub = await pubFromPriv(scalar);
   if (hex(recPub) !== hex(derivedPub))
     throw new Error("Record is internally inconsistent (pub does not match private key).");
   return {
-    v: 1, type: "x25519-private", pub: b64enc(derivedPub),
+    v: 1, type: "x25519-private", pub: pubEnc(derivedPub),
     kdf: rec.kdf, iter: rec.iter | 0, cipher: rec.cipher,
     salt: rec.salt, iv: rec.iv, ct: rec.ct,
   };
@@ -211,7 +224,8 @@ async function fpOf(pubRaw){
 
 /* Node export for the test harness; inert in the browser. */
 if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
-  module.exports = { b64enc, b64dec, b64decSafe, hex, cat, isZero, INFO, VER, PBKDF2_ITER,
+  module.exports = { b64enc, b64dec, hex, pubEnc, pubDec, cat, isZero,
+    INFO, VER, PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
     unwrapScalar, recordFromImport, fpOf };

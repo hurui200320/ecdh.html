@@ -25,14 +25,14 @@ const nc = require("node:crypto");
 /* ---- the core, required directly (the same bytes the browser loads) ---- */
 const core = require("../crypto.js");
 
-const { b64enc, b64dec, b64decSafe, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
+const { b64enc, b64dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
         wrapScalar, unwrapScalar, recordFromImport, fpOf } = core;
 
 /* helper: build a wrapper record the way the app does */
 async function makeRecord(priv, pub, pass, iter){
   const w = await wrapScalar(pass, priv, iter);
-  return { v: 1, type: "x25519-private", pub: b64enc(pub), kdf: "PBKDF2-HMAC-SHA256",
+  return { v: 1, type: "x25519-private", pub: pubEnc(pub), kdf: "PBKDF2-HMAC-SHA256",
            iter, salt: b64enc(w.salt), cipher: "AES-256-GCM", iv: b64enc(w.iv), ct: b64enc(w.ct) };
 }
 
@@ -51,6 +51,18 @@ async function makeRecord(priv, pub, pass, iter){
   assert.ok(nPubRaw.equals(Buffer.from(pub)), "OpenSSL public key must match the WebCrypto one");
 
   await assert.rejects(importPriv(new Uint8Array(16)), /32 bytes/, "short scalar must be rejected");
+
+  /* 1b. public key string form: canonical lowercase hex, lenient whitespace */
+  assert.ok(/^[0-9a-f]{64}$/.test(pubEnc(pub)), "pubEnc is 64 lowercase hex chars");
+  assert.strictEqual(pubEnc(pub), Buffer.from(pub).toString("hex"));
+  assert.ok(Buffer.from(pubDec(pubEnc(pub))).equals(Buffer.from(pub)), "hex round-trip");
+  assert.ok(Buffer.from(pubDec(pubEnc(pub).toUpperCase())).equals(Buffer.from(pub)),
+    "uppercase hex tolerated on input");
+  assert.ok(Buffer.from(pubDec(pubEnc(pub).replace(/(.{8})/g, "$1\n"))).equals(Buffer.from(pub)),
+    "IM-style line-wrapped hex tolerated on input");
+  assert.throws(() => pubDec(b64enc(pub)), /hex/i, "base64 public keys are rejected");
+  assert.throws(() => pubDec("zzzz"), /hex/i, "non-hex garbage is rejected");
+  assert.throws(() => pubDec(pubEnc(pub).slice(0, 62)), /64 hex chars/, "wrong length is rejected");
 
   /* 2. envelope round-trip + byte-exact layout (0x01 | ephPub[32] | iv[12] | ct+tag) */
   const msg = "hello 你好 😀 ∑≤√ x+1=2 \n\tquotes'\"<&>";
@@ -128,18 +140,20 @@ async function makeRecord(priv, pub, pass, iter){
     assert.ok(pt.equals(Buffer.from(priv)), "OpenSSL PBKDF2+GCM unwrap must match");
   }
 
-  /* 7. import validation: pub required, verified, record canonicalized */
+  /* 7. import validation: pub required, verified, record canonicalized (hex) */
   const scalar = await unwrapScalar("correct horse battery staple", rec);
   const canon = await recordFromImport(rec, scalar);
   assert.deepStrictEqual(Object.keys(canon).sort(),
     ["cipher", "ct", "iter", "iv", "kdf", "pub", "salt", "type", "v"],
     "canonical record has exactly the spec fields");
-  assert.strictEqual(canon.pub, b64enc(pub));
-  assert.ok(Buffer.from(b64decSafe(canon.pub)).equals(Buffer.from(pub)));
+  assert.strictEqual(canon.pub, pubEnc(pub), "canonical pub is lowercase hex");
+  assert.ok(Buffer.from(pubDec(canon.pub)).equals(Buffer.from(pub)));
   await assert.rejects(recordFromImport({ ...rec, pub: undefined }, scalar), /missing the required 'pub'/i);
-  await assert.rejects(recordFromImport({ ...rec, pub: b64enc(other.pub) }, scalar), /inconsistent/i);
-  await assert.rejects(recordFromImport({ ...rec, pub: b64enc(new Uint8Array(16)) }, scalar), /32 bytes/);
-  await assert.rejects(recordFromImport({ ...rec, pub: "!!!" }, scalar), "invalid base64 pub must be rejected");
+  await assert.rejects(recordFromImport({ ...rec, pub: pubEnc(other.pub) }, scalar), /inconsistent/i);
+  await assert.rejects(recordFromImport({ ...rec, pub: b64enc(pub) }, scalar), /hex/i,
+    "base64 pub fields are rejected");
+  await assert.rejects(recordFromImport({ ...rec, pub: pubEnc(new Uint8Array(16)) }, scalar), /64 hex chars/);
+  await assert.rejects(recordFromImport({ ...rec, pub: "!!!" }, scalar), /hex/i);
   await assert.rejects(recordFromImport(null, scalar), /Not an ecdh/i);
   const oddIter = await makeRecord(priv, pub, "odd", 1500);
   oddIter.iter = 1500.7;   // hand-edited record: importer must use/store the integer actually used

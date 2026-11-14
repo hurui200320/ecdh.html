@@ -16,8 +16,8 @@ AES-256-GCM. Browsers do all of it natively via Web Crypto.
 **Designed use case:** the trusted channel dies (for example, server get blocked).
 You and your friends still have *some* internet — an IM, an email, a pastebin —
 but assume that channel is tapped, stored, and actively rewritable. This tool
-turns that channel back into a confidential one by moving base64 blobs through
-it. Nothing else.
+turns that channel back into a confidential one by moving base64 envelopes and
+hex public keys through it. Nothing else.
 
 > Special note: This system need another hard to tamper channel to setup.
 > It's recommended to setup and share the keys over a trusted channel,
@@ -129,6 +129,13 @@ All base64 is standard alphabet **with padding**. All "raw" X25519 keys are the
 usual 32-byte little-endian u-coordinate strings — identical bytes in Web
 Crypto, BouncyCastle, and libsodium.
 
+### Public key encoding
+
+Public keys are exchanged as **hex strings**: canonical form is 64 lowercase
+chars matching `^[0-9a-f]{64}$` — 0-9a-f only, so IM autocorrect cannot mangle
+a key into emoji the way it can with base64's `+/=` alphabet. Decoders tolerate
+uppercase and embedded whitespace (IM line-wraps) but nothing else.
+
 ### Envelope
 
 ```
@@ -181,7 +188,7 @@ its 12-emoji fingerprint renders as
 {
   "v": 1,
   "type": "x25519-private",
-  "pub":   "<b64, raw 32-byte public key, plaintext field>",
+  "pub":   "<hex, raw 32-byte public key, plaintext field>",
   "kdf":   "PBKDF2-HMAC-SHA256",
   "iter":  800000,
   "salt":  "<b64, 16 bytes>",
@@ -195,7 +202,7 @@ its 12-emoji fingerprint renders as
   `iter` in the record rather than assuming
 - `pub` is required and verified against the private scalar on import
 - localStorage keys: `ecdh.key.v1` (this record), `ecdh.contacts.v1`
-  (`[{"name","pub"}]`), `ecdh.lastcontact.v1`
+  (`[{"name","pub"}]`, `pub` is the hex public key), `ecdh.lastcontact.v1`
 
 ### BouncyCastle interop — the constants you need
 
@@ -310,7 +317,7 @@ Validated in headless Chromium via Playwright:
 
 - Page boots behind plain HTTP on a LAN IP → Web Crypto banner, buttons
   disabled (env: localhost works, `file://` works)
-- Keypair generation; storage wrap (PBKDF2 800k + AES-GCM); 44-char pubkey;
+- Keypair generation; storage wrap (PBKDF2 800k + AES-GCM); 64-hex-char pubkey;
   12-emoji + hex fingerprint rendered
 - Contact add with live fingerprint preview; fingerprint deterministic across
   views; contact removal

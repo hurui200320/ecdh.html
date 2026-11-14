@@ -146,7 +146,7 @@
   <div id="setup-have" hidden>
     <div class="card">
       <h2>Your identity</h2>
-      <label for="pubout">Public key (base64) — share freely; friends add it as a contact</label>
+      <label for="pubout">Public key (hex) — share freely; friends add it as a contact</label>
       <textarea id="pubout" rows="2" readonly></textarea>
       <button id="btn-copy-pub" type="button">Copy public key</button>
       <label>Fingerprint — read over a voice call</label>
@@ -198,8 +198,8 @@
       <summary>Add a contact</summary>
       <label for="ct-name">Name</label>
       <input type="text" id="ct-name" autocomplete="off" placeholder="e.g. Alice">
-      <label for="ct-pub">Their public key (base64)</label>
-      <textarea id="ct-pub" rows="2" placeholder="32-byte base64 public key"></textarea>
+      <label for="ct-pub">Their public key (hex)</label>
+      <textarea id="ct-pub" rows="2" placeholder="64 hex chars (32-byte public key)"></textarea>
       <div id="ct-fp" hidden>
         <div id="ct-fp-emoji" class="fp-emoji"></div>
         <div id="ct-fp-hex" class="fp-hex"></div>
@@ -301,6 +301,7 @@
  * Protocol: envelope = base64(0x01 | ephPub[32] | iv[12] | AESGCM ct||tag)
  *           key = HKDF-SHA256(X25519(eph, recip), salt=ephPub||recipPub,
  *                              info="ecdh.html/v1", 32)
+ * Public keys are hex strings (64 chars, 0-9a-f); see pubEnc/pubDec in crypto.js.
  * See README.md for the pinned threat model and byte-exact spec.
  * ===================================================================== */
 
@@ -369,7 +370,7 @@ function loadState(){
   if (!Array.isArray(CONTACTS)) CONTACTS = [];
   CONTACTS = CONTACTS.filter(c => c && typeof c.name === "string" && typeof c.pub === "string");
   if (RECORD && typeof RECORD.pub === "string"){
-    try { OWN_PUB = b64dec(RECORD.pub); } catch { RECORD = null; OWN_PUB = null; }
+    try { OWN_PUB = pubDec(RECORD.pub); } catch { RECORD = null; OWN_PUB = null; }
     if (!OWN_PUB || OWN_PUB.length !== 32){ RECORD = null; OWN_PUB = null; }
   } else if (RECORD){ RECORD = null; }
 }
@@ -390,7 +391,7 @@ async function renderSetup(){
   $("#setup-none").hidden = have;
   $("#setup-have").hidden = !have;
   if (have){
-    $("#pubout").value = b64enc(OWN_PUB);
+    $("#pubout").value = pubEnc(OWN_PUB);
     const fp = await fpOf(OWN_PUB);
     $("#fp-emoji").textContent = fp.emoji;
     $("#fp-hex").textContent = fp.hexs;
@@ -428,7 +429,7 @@ async function showSelFp(){
   const c = CONTACTS[i];
   if (!c){ $("#sel-fp").hidden = true; return; }
   try {
-    const fp = await fpOf(b64dec(c.pub));
+    const fp = await fpOf(pubDec(c.pub));
     $("#sel-fp").hidden = false;
     $("#sel-fp-emoji").textContent = fp.emoji;
     $("#sel-fp-hex").textContent = fp.hexs;
@@ -454,7 +455,7 @@ $("#btn-generate").addEventListener("click", async (e) => {
     const w = await wrapScalar(p1, priv, PBKDF2_ITER);
     RECORD = {
       v: 1, type: "x25519-private",
-      pub: b64enc(pub),
+      pub: pubEnc(pub),
       kdf: "PBKDF2-HMAC-SHA256", iter: PBKDF2_ITER,
       salt: b64enc(w.salt), cipher: "AES-256-GCM",
       iv: b64enc(w.iv), ct: b64enc(w.ct),
@@ -484,7 +485,7 @@ $("#btn-import").addEventListener("click", async (e) => {
   try {
     const scalar = await unwrapScalar(pass, rec);   // throws on wrong passphrase
     RECORD = await recordFromImport(rec, scalar);   // throws on missing/mismatched pub
-    OWN_PUB = b64dec(RECORD.pub);
+    OWN_PUB = pubDec(RECORD.pub);
     saveRecord();
     $("#imp-json").value = ""; $("#imp-pass").value = "";
     await renderSetup();
@@ -572,8 +573,7 @@ $("#ct-pub").addEventListener("input", () => {
     $("#ct-fp").hidden = true; $("#ct-wait").hidden = true;
     if (!v) return;
     try {
-      const pub = b64dec(v);
-      if (pub.length !== 32) throw new Error();
+      const pub = pubDec(v);
       const fp = await fpOf(pub);
       $("#ct-fp").hidden = false;
       $("#ct-fp-emoji").textContent = fp.emoji;
@@ -589,17 +589,16 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
   const btn = e.target;
   const name = $("#ct-name").value.trim() || "friend";
   const pubStr = $("#ct-pub").value.trim();
-  if (!pubStr) return showErr(err, "Paste their public key (base64).");
+  if (!pubStr) return showErr(err, "Paste their public key (hex).");
   let pub;
-  try { pub = b64dec(pubStr); } catch { return showErr(err, "Public key is not valid base64."); }
-  if (pub.length !== 32) return showErr(err, "Public key must decode to exactly 32 bytes.");
-  const pubB64 = b64enc(pub);   // canonical form
-  if (CONTACTS.some(c => c.pub === pubB64))
+  try { pub = pubDec(pubStr); } catch { return showErr(err, "Public key is not valid hex (expected 64 chars, 0-9a-f)."); }
+  const pubHex = pubEnc(pub);   // canonical form (lowercase)
+  if (CONTACTS.some(c => c.pub === pubHex))
     return showErr(err, "This public key is already saved.");
-  CONTACTS.push({ name, pub: pubB64 });
+  CONTACTS.push({ name, pub: pubHex });
   try {
     saveContacts();
-    localStorage.setItem(LS_LAST, pubB64);   // last-contact tracked by key, not name
+    localStorage.setItem(LS_LAST, pubHex);   // last-contact tracked by key, not name
   } catch (ex){ return showErr(err, ex.message || "Could not save the contact."); }
   $("#ct-name").value = ""; $("#ct-pub").value = "";
   $("#ct-fp").hidden = true;
@@ -623,7 +622,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   const c = CONTACTS[$("#contact-sel").value | 0];
   if (!c) return showErr(err, "Pick a contact first.");
   let pub;
-  try { pub = b64dec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
+  try { pub = pubDec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
   $("#btn-clear-msg").hidden = true;
