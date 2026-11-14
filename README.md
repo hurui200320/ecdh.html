@@ -1,459 +1,324 @@
 # ecdh.html
 
-A simple and static web page for you and your average friend who not care
-about security to share secrets safely (to some level) over a untrusted channel.
+A simple and static web page for you and your average friend (who doesn't care about security) to share secrets safely (to some level) over an untrusted channel.
 
-This is a tiny static site that you host yourself for exchanging encrypted text over
-distrusted channels. No CDN, no libraries, no backend, no telemetry — every byte
-served comes out of this repo.
+There is no CDN, no third-party library, no backend, and no telemetry. Every byte served comes directly from this repository, and all cryptographic operations run natively in the browser via the Web Crypto API:
 
-> LLM usage: I use LLM to implement all the html, js and css.
-> I have reviewed the outcome and decided to trust the artifacts.
+- **Key exchange & encryption:** Per-message ephemeral X25519 (ECIES-style) → HKDF-SHA-256 → AES-256-GCM
+- **At-rest key protection:** PBKDF2-HMAC-SHA256 (800,000 iterations) → AES-256-GCM
 
-**Cryptography:** per-message ephemeral X25519 (ECIES-style) → HKDF-SHA-256 →
-AES-256-GCM. Browsers do all of it natively via Web Crypto.
+**Intended use case:** Your trusted communication channel goes down (for example, your private server gets blocked). You and your friends still have *some* way to exchange text — an instant messenger, email, or a pastebin — but you have to assume that channel is monitored, logged, and actively tampered with. This tool turns that untrusted channel back into a confidential one by passing only hex public keys and tagged ciphertext envelopes (encoded in CJK base4096 or Z85) through it.
 
-**Designed use case:** the trusted channel dies (for example, server get blocked).
-You and your friends still have *some* internet — an IM, an email, a pastebin —
-but assume that channel is tapped, stored, and actively rewritable. This tool
-turns that channel back into a confidential one by moving tagged envelopes
-(base4096 CJK or Z85) and hex public keys through it. Nothing else.
-
-> Special note: This system need another hard to tamper channel to setup.
-> It's recommended to setup and share the keys over a trusted channel,
-> or at least something like a voice call (which is hard to temper).
+> **Important:** Setting up this system requires an initial channel that is difficult to tamper with. You should exchange and verify public keys over a trusted channel beforehand, or at least verify key fingerprints over a real-time voice call, where active tampering is much harder to pull off.
 
 ---
 
-## Threat model
+## LLM Usage
 
-### The system in one sentence
+All of the HTML, JavaScript, and CSS in this repository were written with the help of an LLM. I have personally reviewed the generated code and decided to trust the resulting files.
 
-Friends agree (out of band) to exchange ciphertext via whatever unsafe channel
-still works; each side holds a passphrase-wrapped private key on their own
-device. **Trust anchors are exactly two things:** (1) the code file you run, and
-(2) public keys verified once out-of-band. Everything in between — the IM, the
-mail provider, whoever taps the wire — is assumed able to read, store, replay,
-and rewrite everything it carries.
+---
 
-> In another words, if your server/host get hacked and backdoor is planted,
-> this system cannot protect you. And if you got MITM attack when you exchange
-> public keys, this system cannot detect impersonated identities. You must verify
-> the one who gives you public key is the actual person you're expecting.
-> And if the user's device has been compromised, this system can't protect either.
+## Threat Model
 
-### Actors
+This section explains what `ecdh.html` protects against and where its limits are, so you can decide **when to use it and when NOT to use it**.
+
+### How the system works in one paragraph
+
+Friends agree out of band to exchange encrypted text over whatever untrusted channel still works, while each person keeps a passphrase-wrapped private key on their own device. Everything in between — the messaging app, the email provider, or anyone tapping the network — is assumed to be able to read, store, replay, and modify every message it carries.
+
+**Your security rests on three core assumptions:**
+
+1. **The code you run is authentic.** If the server hosting this page is compromised and a backdoor is planted, this system cannot protect you. (Saving a local copy of `index.html` and `crypto.js` in advance avoids this risk.)
+2. **Public keys are verified out of band.** If an attacker substitutes a fake public key during setup (a man-in-the-middle attack), the cryptography alone cannot tell you that you are talking to an impostor. You must verify that the public key actually belongs to your friend.
+3. **Your device itself is not compromised.** If spyware or a keylogger is running on your phone or computer while you type your passphrase or read messages, browser-side encryption cannot protect you.
+
+### When to use this tool (and when NOT to)
+
+**Use this tool when:**
+- Your normal encrypted or private channels are blocked or unavailable, leaving only monitored or filtered text channels (domestic IMs, email, forums).
+- The people you are communicating with want something simple that runs in a standard browser without installing command-line tools or managing complex keyrings.
+- You can verify each other's 12-emoji key fingerprint over a real-time voice call (or in person) before relying on the channel.
+
+**Do NOT use this tool when:**
+- **Both parties are comfortable with dedicated security tools.** If everyone involved is willing to use **Signal-based protocol** or **GPG**, use those instead — they provide stronger guarantees like forward secrecy and cryptographic sender authentication.
+- **You face a high-budget or nation-state adversary.** If your threat model includes device zero-days, active real-time MITM attacks accompanied by live voice deepfakes, or targeted endpoint compromise, **stop using this tool** and move to Signal-protocol apps, GPG with a verified web of trust, or in-person communication.
+
+### Threat actors
 
 | Actor | Assumption |
 |---|---|
-| Passive eavesdropper on the unsafe channel | Present (that's the premise) |
-| The unsafe channel itself (IM/email software, provider) | Hostile: may read, tamper with, or substitute anything, incl. the HTML file if sent through it |
-| Endpoint malware on your device | Accepted risk (see below) |
-| Nation-state with zero-days, active MITM, deepfaked voice | **Out of scope — see escalation** |
+| Passive eavesdropper on the communication channel | Present (this is the baseline assumption). |
+| The communication channel itself (IM/email app or provider) | Hostile: may log, censor, modify, or replace anything sent through it — including the HTML/JS files if distributed over that channel. |
+| Malware on your device | Accepted risk (see below). |
+| Targeted nation-state (zero-days, active MITM with voice deepfakes) | **Out of scope** (see *When NOT to use this tool* above). |
 
-### Protected
+### What is protected
 
-| Asset | Protection |
+| Asset | How it is protected |
 |---|---|
-| Message contents vs tapped/monitored channels | X25519 ECDH + AES-256-GCM, fresh key per message |
-| Tampered or forged ciphertext | GCM tag — any modification = failed decryption |
-| Key-substitution MITM (fake public keys) | Fingerprint voice-verification ceremony + all-zero shared-secret rejection |
-| Private key at rest (device storage **and** backup file) | Mandatory passphrase wrap: PBKDF2-HMAC-SHA256 (800k iter) + AES-256-GCM |
-| Availability during an emergency | Static files only; offline PWA cache; a saved copy works from `file://`; decryption needs zero server involvement |
-| Interop with your own trusted tools | Byte-exact spec below, implementable in BouncyCastle in an afternoon |
+| Message confidentiality over monitored channels | Ephemeral X25519 ECDH + HKDF-SHA-256 + AES-256-GCM, using a fresh keypair for every message. |
+| Tampered or forged ciphertext | AES-GCM authentication tag; any modification causes decryption to fail cleanly. |
+| Key-substitution MITM (fake public keys) | Out-of-band 12-emoji fingerprint verification + automatic rejection of all-zero shared secrets. |
+| Private key at rest (in `localStorage` and backup files) | Mandatory passphrase encryption using PBKDF2-HMAC-SHA256 (800,000 iterations) + AES-256-GCM. |
+| Availability during an outage | Pure static files with an offline PWA service worker; saved copies also run directly from `file://` with zero server involvement. |
+| Long-term interoperability | Byte-exact protocol specification below, easy to reimplement with standard libraries like BouncyCastle or OpenSSL. |
 
-### Consciously NOT protected
+### What is consciously NOT protected
 
-| Risk | Why accepted |
+| Risk | Why it is accepted & how to mitigate it |
 |---|---|
-| **Sender impersonation** — anyone who has your public key can send you a message that decrypts | The operational protocol (voice-agreed usage windows + fingerprints) covers it. Real per-sender auth requires Ed25519 signatures, aka double key management per person. This is a simple tool for average people who doesn't care security. If both parties are psecurity focused, go use something like GPG and signal-based protocol. |
-| Replay / reordering of genuinely old messages | Humans have conversational context; timestamps/CSPRNG nonces add trust in something unverifiable anyway |
-| Traffic analysis (who, when, how much) — blobs are visibly blobs | Steganography is a different project |
-| Endpoint compromise *while using the tool* | A keylogger beats any passphrase. The wrap protects at-rest artifacts only |
-| Forward secrecy against later key theft (ECIES to a static recipient key) | Mitigated by wrap quality + wipe discipline. Ratchets (Signal-style) = 10× the complexity — that's what Signal is for, and is hard to implement as serverless static html website. Usual key management principles applies here. Rotate your keys periodically. |
-| Automated sync / push / multi-device | Manual copy-paste is dumb, portable, and hard to break. Recovery = restore backup file |
-| Forgotten passphrase = key and all its messages lost forever | By design; there is no escrow. Store the passphrase somewhere survivable (password manager, paper) |
-| Offline brute-force of the passphrase wrap | No rate limiting exists offline — PBKDF2 slows it, **passphrase quality is the actual defense**. Use 4+ random words. Also reduce exposure of the backup file, and rotate your keys periodically. |
-
-### The voice ceremony (the human half, ~10 seconds)
-
-> This ceremony assumes you lost all trust channel and has to establish
-> the key exchange over a untrusted channel. Usually, realtime voice chat
-> let you verify your friend's identity and is hard to tamper (but might be
-> recorded or monitored).
-
-1. On a calm day, over a **hard-to-tamper channel** (voice call), agree to use
-   the system, what for, and roughly when ("if the group dies, we coordinate
-   here").
-2. Each person opens the page **on their own device** and reads the
-   **12-emoji fingerprint** shown under their own public key.
-3. The other party checks it against the fingerprint displayed for that contact
-   in their saved contacts. Verify in **both directions**.
-4. Unexpected encrypted blobs outside an agreed window (or from unknown
-   fingerprints after re-shares) are treated with suspicion — that's the soft
-   sender-authentication.
-5. Never delegate the comparison. If verification is impossible, treat
-   confidentiality as intact but **sender/receiver identity as unknown**.
-
-The fingerprint needs ~72 bits because brute-forcing a shorter one is offline
-and unlimited: 4 emoji (24 bits) ≈ minutes on a laptop; 12 emoji (72 bits) is
-beyond anything in this threat model. Never shrink it.
-
-### Escalation line (decided in advance)
-
-If the adversary budget grows — targeted nation-state, zero-days, deepfake
-voice — **stop using this tool** and move to Signal-protocol implementations,
-GPG over a verified web of trust, or in person. This tool's honest niche:
-censorship-tolerant, dependency-free, human-ceremony emergency comms.
-
-### Design decisions log
-
-| Decision | Rationale |
-|---|---|
-| Per-message ephemeral X25519 (ECIES) | Fresh AES key per message → no IV-reuse hazard; sender retains nothing; receiver's public key is the only pre-shared material |
-| HKDF-SHA-256 between ECDH and AES | Domain separation; ~3 lines; standard in BC |
-| Envelope carries ephemeral pub + IV | Receiver needs zero sender state |
-| Mandatory passphrase on stored key | Wrong passphrase is cleanly detectable via GCM auth failure |
-| Export/import = the same wrapped record | One format, one code path; backup is ciphertext everywhere it rests; servers/apps that grab the file get noise |
-| Fingerprint = SHA-256 → 72 bits → 12 emoji (+ full hex) | Readable aloud; 24-bit fingerprints are brute-forceable (see above) |
-| No sender signatures | Operational convention instead (ceremony step 4) |
-| No replay/timestamps, no AAD | See not-protected table; simplicity is a security feature in a rarely-used emergency tool |
-| Offline PWA + `file://` capability | Emergencies + hosting-seizure tolerance; hosts only distribute the files |
-| No test vectors embedded | The byte-exact spec below + DER constants are the interop contract |
+| **Sender impersonation** (anyone who knows your public key can send you a valid encrypted message) | Cryptographic sender authentication requires per-sender signing keys (e.g., Ed25519), which doubles the key-management burden. Since this is a lightweight tool for non-technical friends, sender authenticity relies on human context (agreed communication windows and verified contacts). If you need strict sender authentication, use GPG or Signal. |
+| **Forward secrecy against later key compromise** | Messages are encrypted to a static recipient public key (ECIES). Stateful ratchets (like Signal's Double Ratchet) are far too complex and fragile for a stateless copy-paste web page. Protect your key with a strong passphrase, keep backups limited, and **rotate your keys periodically**. |
+| **Offline brute-force of a stolen key backup** | Offline attackers have no rate limit. PBKDF2 (800,000 iterations) slows down guessing, but **passphrase strength is your real defense**. Use at least 4 random words, minimize where your backup file is stored, and **rotate keys periodically**. |
+| **Replay or reordering of old messages** | An attacker on the channel can re-send a previously captured message. Humans already have conversational context, whereas unauthenticated timestamps or nonces add complexity without real security. |
+| **Traffic analysis** (who is talking, when, and how much) | Even when encoded as archaic CJK characters (base4096) to bypass keyword filters, ciphertexts are still recognizable as encoded blocks. True steganography is a separate problem. |
+| **Endpoint compromise while using the tool** | A keylogger or screen capture tool defeats any passphrase. Passphrase wrapping only protects keys while at rest. |
+| **Forgotten passphrase** | By design, there is no key escrow or password reset. Losing your passphrase means permanently losing your key and all messages encrypted to it. Store your passphrase somewhere durable (such as a password manager or on paper). |
+| **Automated multi-device sync or push notifications** | Manual copy-paste is simple, portable, and hard to break. To use the same identity on another device, export and import the encrypted backup JSON. |
 
 ---
 
-## Protocol v1 (byte-exact)
+## Deployment and Usage
 
-Envelope text is **Z85** (ZeroMQ base85 — exact alphabet and tail rule below).
-The JSON key record's binary fields are standard base64 **with padding**. All
-"raw" X25519 keys are the
-usual 32-byte little-endian u-coordinate strings — identical bytes in Web
-Crypto, BouncyCastle, and libsodium.
-
-### Public key encoding
-
-Public keys are exchanged as **hex strings**: canonical form is 64 lowercase
-chars matching `^[0-9a-f]{64}$` — 0-9a-f only, so IM autocorrect cannot mangle
-a key into emoji the way it can with base64's `+/=` alphabet. Decoders tolerate
-uppercase and embedded whitespace (IM line-wraps) but nothing else.
-
-### Envelope
-
-The envelope exists as **raw bytes**; its text form — what humans copy-paste
-through the unsafe channel — wraps those bytes in a swappable encoding layer:
-
-```
-text form = TAG || codec( 0x01 | ephPub[32] | iv[12] | ciphertext )
-```
-
-- `TAG` — one char naming the text encoding, so the decoder can tell at a
-  glance how to parse the rest. Today: `A` = Z85 and `賒` = base4096 (specs
-  below; the UI defaults to `賒`). Tags match
-  strictly (case-sensitive, no untagged fallback) and are **orthogonal to the
-  version byte**: the tag says how the bytes are spelled, `0x01` inside says
-  what they mean.
-- All decoders strip whitespace before anything else, so IM line-wraps (and a
-  tag split from its payload) survive; encoders emit one canonical compact
-  string.
-
-Envelope bytes:
-
-- `0x01` — version byte
-- `ephPub` — public key of a **per-message ephemeral** X25519 keypair,
-  generated at encrypt time and immediately discarded (the private half never
-  leaves that one click)
-- `iv` — 12 uniform random bytes
-- `ciphertext` — AES-256-GCM of the UTF-8 plaintext; 128-bit tag appended
-  (Web Crypto and BC JCE both append the tag at the end)
-- No AAD
-- The receiver reconstructs: `ephPub` from the envelope, their own public key
-  from their stored record
-
-### Envelope text encoding: Z85
-
-Tag `A` wraps the envelope bytes in **Z85** — ZeroMQ's base85 variant, 4 bytes
-→ 5 chars (25% overhead vs base64's 33%). Its alphabet deliberately avoids
-quotes and backslash, so it survives JSON/shell/markdown channels that mangle
-classic Ascii85's `"` `'` `\` range:
-
-```
-0-9 a-z A-Z . - : + = ^ ! / * ? & < > ( ) [ ] { } @ % $ #
-```
-
- digit order 0-84 as listed; the string in `crypto.js` (`Z85`) is the normative
- form.
-
-- Each 4-byte group is read **big-endian** into a 32-bit value, then written
-  as 5 base-85 digits, **most significant first** (`d4` = value / 85⁴).
-- **Tails** (the Z85 spec only defines lengths divisible by 4; envelope
-  lengths are 45 + plaintext, so they happen constantly): the final `r` bytes
-  (r = 1..3) are zero-padded to a full group and only the first `r+1` chars
-  are emitted. Decoding a `k`-char tail (k = 2..4) pads the missing digits
-  with the highest digit `#` (84), decodes, and keeps the first `k−1` bytes.
-  A lone trailing char is never valid.
-- **Strictness:** any character outside the alphabet, any length with a
-  1-char tail, and any 5-char group whose value exceeds 2³²−1 are rejected.
-  Legally encoded tails never overflow 2³²−1, so an overflowing group proves
-  the input is not canonical Z85.
-- Encoders emit one canonical compact string (no wrapping, no shorthand —
-  unlike Ascii85 there is no `z` for zero groups). Decoders strip whitespace
-  before parsing, so IM line-wraps survive.
-
-Spec vector (from the ZeroMQ Z85 definition): the bytes
-`86 4F D2 6F B5 59 F7 5B` encode to `HelloWorld`. Tail vectors: byte `01`
-encodes to `0r`, bytes `01 02` to `0rJ`, bytes `01 02 03` to `0rJu`.
-
-### Envelope text encoding: base4096 (tag 賒)
-
-Tag `賒` wraps the envelope bytes in **base4096** — 12 bits per CJK character,
-3 bytes → 2 chars (0.68 chars/byte, ~1.9× denser than Z85). The point is the
-channel, not density: every digit is an archaic nature/object-radical hanzi,
-so an envelope reads as harmless classical-looking text, and **no common
-Chinese vocabulary — sensitive or otherwise — can be spelled in it**, leaving
-IM keyword filters nothing to match.
-
-- **Digit set:** 4,096 characters, pinned verbatim as `B4096_TABLE` in
-  `crypto.js` (that constant is the source of truth), strictly ascending from
-  U+4E62 to U+8CCF. Every digit sits in the BMP CJK block and predates
-  Unicode 5.1, so system CJK fonts render it everywhere.
-- **How the set was chosen** (deterministic, auditable):
-  Unicode 18.0 `kRSUnicode` radical whitelist — the 47 nature/object radicals
-  土山木水牛田石竹糸羊羽艸虫角谷豆豕豸貝車酉里金長門阜隹雨青非面革韋韭音頁風飛食首香馬魚鳥鹿龍龜
-  — then drop every GB2312-encodable character and every character of the
-  《现代汉语常用字表》(3500) / 《现代汉语通用字表》(7000), then order by
-  codepoint. The first 4,096 are the digits; the next three are the control
-  chars `PAD1 賐` (U+8CD0), `PAD2 賑` (U+8CD1), tag `賒` (U+8CD2). A residual
-  handful of rare traditional characters survives by design (e.g. 賄賂 could
-  in principle appear by chance with probability ≈ 1/100,000 per message).
-- **Groups:** each 3-byte group is read **big-endian** into a 24-bit value,
-  written as 2 base-4096 digits, **most significant first**.
-- **Tails:** a 1-byte tail is one digit (byte << 4) followed by `PAD1`; a
-  2-byte tail is two digits (16 data bits in a 24-bit slot) followed by
-  `PAD2`. The trailing `PAD` marker tells the decoder the tail size — this
-  removes the ambiguity a bare length cannot (2 tail chars are
-  indistinguishable from one full group). An envelope never ends in a bare
-  digit run of odd length.
-- **Strictness:** any character outside the table (including a `PAD` marker
-  in the middle), any length that does not fit a whole number of groups plus
-  a marked tail, and any nonzero padding bits in a tail are rejected —
-  encoders emit one canonical compact form; decoders strip whitespace first,
-  so IM line-wraps survive.
-
-Spec vectors: bytes `01 02 03` encode to `圼嶖`; tail vectors: byte `01` →
-`圼賐`, bytes `01 02` → `圼嶒賑`.
-
-### Key derivation
-
-```
-ss  = X25519(ephPriv, recipientPub)          // 32 bytes
-if ss == all zeros: REJECT (invalid/crafted public key)
-key = HKDF-SHA256(ikm = ss,
-                  salt = ephPub || recipientPub,   // 64 bytes
-                  info = UTF-8("ecdh.html/v1"),
-                  L = 32)
-```
-
-### Public key fingerprint
-
-Canonical form: lowercase hex of **SHA-256(public key)**, all 32 digest bytes —
-use this for cross-implementation comparison. The page additionally renders the
-first 72 bits as 12 emoji (6 bits each, taken from the least-significant end,
-fixed 64-emoji alphabet) for reading aloud.
-
-Chunk order, spelled out for implementers: let `v` be the 72-bit big-endian
-integer built from digest bytes 0–8; then twelve times: `emoji[i] =
-ALPHABET[v mod 64]`, `v = floor(v / 64)`. The **leftmost** emoji carries the
-*least*-significant 6 bits. `ALPHABET` is the `EMOJI` array in `crypto.js`,
-in source order.
-
-Test vector: the 32-byte all-zero public key hashes to
-`66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925`;
-its 12-emoji fingerprint renders as
-`🌲 🦁 🎩 🌋 🐙 🌊 🎵 🐯 🥑 🌊 🐰 🧊`.
-
-### Private key wrapper (single format: localStorage *and* backup file)
-
-```json
-{
-  "v": 1,
-  "type": "x25519-private",
-  "pub":   "<hex, raw 32-byte public key, plaintext field>",
-  "kdf":   "PBKDF2-HMAC-SHA256",
-  "iter":  800000,
-  "salt":  "<b64, 16 bytes>",
-  "cipher":"AES-256-GCM",
-  "iv":    "<b64, 12 bytes>",
-  "ct":    "<b64, AES-GCM of the raw 32-byte private scalar + 16-byte tag>"
-}
-```
-
-- AES key = PBKDF2-HMAC-SHA256(passphrase, salt, iter) — importers honor the
-  `iter` in the record rather than assuming
-- `pub` is required and verified against the private scalar on import
-- localStorage keys: `ecdh.key.v1` (this record), `ecdh.contacts.v1`
-  (`[{"name","pub"}]`, `pub` is the hex public key), `ecdh.lastcontact.v1`
-
-### BouncyCastle interop — the constants you need
-
-- Raw scalar ↔ key objects via fixed DER prefixes:
-  - PKCS#8 X25519 private: `302e020100300506032b656e04220420 || raw32`
-  - SPKI X25519 public: `302a300506032b656e032100 || raw32`
-- DH: `new X25519PrivateKeyParameters(scalar, 0)` → `X25519Agreement`
-  (agreement is 32 bytes, little-endian — identical to WebCrypto `deriveBits`)
-- HKDF: `HKDFBytesGenerator(new SHA256Digest())` with
-  `HKDFParameters(ikm, salt, info)`, `generateBytes(out, 0, 32)`
-- PBKDF2: JCE `PBKDF2WithHmacSHA256` (`SecretKeyFactory`), 32 bytes of key
-  material, or BC `PKCS5S2ParametersGenerator(new SHA256Digest())`
-- AES-GCM: JCE `Cipher.getInstance("AES/GCM/NoPadding")` +
-  `GCMParameterSpec(128, iv)` — BC appends the tag at the end, same as Web
-  Crypto
-- X25519 clamping is part of the scalar multiplication in every
-  implementation — export/import of raw scalars needs no special handling
-
----
-
-## Operational runbook
-
-### Calm-day setup (once per person)
-
-1. Deploy (below), and **save copies of `index.html` and `crypto.js` (same
-   folder)** on your devices/drives — a saved pair is a full offline-capable
-   instance. Optionally record the SHA-256 of `index.html` and `crypto.js`
-   on paper next to your fingerprints.
-2. Generate your identity with a **strong passphrase** (4+ random words).
-3. **Export the backup JSON** and keep it somewhere survivable (email it to
-   yourself, USB stick, password manager attachment — it's ciphertext; its
-   safety = passphrase strength).
-4. Voice ceremony with each contact (§ ceremony), add each other's public
-   keys as named contacts.
-5. Make sure your passphrase is recoverable somewhere. Losing it = losing every
-   message ever sent to that key. There is no reset-without-loss.
-
-### Emergency send
-
-Open the page (offline/cached/saved copy all fine) → pick the contact →
-type → Encrypt → copy the envelope → send it through *any* channel.
-
-### Emergency receive
-
-Paste envelope → passphrase → read. Plaintext is never stored; screenshot what
-you must, then clear.
-
-### Device loss / new device
-
-Setup → Restore from backup: paste the exported JSON + passphrase → your
-identity (and its fingerprint) are back, no re-verification ceremony needed.
-
-If you have the spare time, rotate your keys and repeat the ceremony with your
-friends.
-
-### Compromise / rotation
-
-Wipe key → generate → **re-run the voice ceremony** → peers delete the old
-contact and add the new one.
-
----
-
-## Deployment
+### Files in this repository
 
 | File | Purpose |
 |---|---|
-| `index.html` | The app — UI + inline CSS; loads `crypto.js` |
-| `crypto.js` | DOM-free crypto core (X25519/HKDF/AES-GCM/PBKDF2/fingerprints), also used by the Node test |
-| `sw.js` | Cache-first service worker (offline) |
-| `manifest.json` | Minimal PWA manifest |
-| `icon.svg` | Icon |
-| `tests/` | Crypto-core cross-check harness (Node, no browser) |
+| `index.html` | The application UI and inline CSS; loads `crypto.js`. |
+| `crypto.js` | DOM-free cryptographic core (X25519, HKDF, AES-GCM, PBKDF2, codecs, fingerprints), shared with the Node test suite. |
+| `sw.js` | Cache-first service worker for offline use. |
+| `manifest.json` | Minimal PWA web app manifest. |
+| `icon.svg` | Application icon. |
+| `tests/` | Automated Node.js test suite cross-checking `crypto.js` against OpenSSL. |
 
-- **HTTPS (or localhost) is mandatory.** Browsers expose Web Crypto
-  (`crypto.subtle`) only in secure contexts. Serving over plain `http://` on a
-  LAN IP silently disables everything — the page will tell you. Use a reverse
-  proxy with TLS, or open locally.
-- `file://` counts as a secure context: a USB-stick copy works fully offline
-  (service worker simply doesn't apply there, and isn't needed).
-- Browser support = everything evergreen since ~2024–2025 (X25519 in Web
-  Crypto: Chrome/Edge 133+, Firefox 129+, Safari 17+). The page feature-detects
-  and refuses politely.
-- After editing any file, bump the `CACHE` version string in `sw.js` so
-  returning clients update; the envelope/record version bytes keep old
-  messages/keys valid across UI changes.
-- iOS note: Safari may evict PWA storage after ~a week of non-use — another
-  reason the export backup habit matters.
+### Deployment notes
 
-## Testing
+- **HTTPS or `localhost` is required when serving over a network.** Browsers only expose Web Crypto (`crypto.subtle`) in secure contexts. Opening the site over plain `http://` on a LAN IP will disable Web Crypto (the page will display a banner explaining why). Put it behind a TLS reverse proxy or open it on `localhost`.
+- **Local `file://` copies work offline.** Browsers treat `file://` as a secure context, so saving `index.html` and `crypto.js` into the same folder on a USB drive or local disk gives you a fully functional offline copy without any web server.
+- **Browser requirements:** Any modern evergreen browser with X25519 support in Web Crypto (Chrome/Edge 133+, Firefox 129+, Safari 17+). The page checks for support on startup and displays a clear warning if a required API is missing.
+- **Updating a hosted deployment:** If you edit any file, increment the `CACHE` version string in `sw.js` so returning browsers pick up the new assets. After deploying over HTTPS, load the page once, switch to offline mode, and reload to confirm the service worker serves the cached app shell.
+- **iOS Safari caveat:** Safari may clear PWA storage after roughly a week of inactivity — always export and keep a copy of your backup JSON.
 
-Local smoke test:
+To run locally for testing:
 
 ```bash
 python3 -m http.server 8000
-# open http://localhost:8000  (localhost = secure context)
+# Open http://localhost:8000 in your browser
 ```
 
-Crypto-core cross-check (no browser needed; Node >= 18.4 for X25519):
+To run the automated cryptographic test suite (requires Node.js >= 18.4):
 
 ```bash
 node tests/crypto.test.js
 ```
 
-Loads `crypto.js` (the DOM-free crypto core the page loads) and verifies the DER
-prefixes, envelope layout and the tag-dispatch text layer (Z85 and base4096),
-HKDF derivation,
-PBKDF2 wrapper, and emoji fingerprints against Node's independent OpenSSL
-implementation (the same operations as the BouncyCastle recipe above), plus the
-documented failure paths: zero shared secret, tampered ciphertext, wrong
-version byte, unknown/missing tags, truncated/garbage input, wrong passphrase,
-inconsistent records, non-canonical base4096 tails, and the base4096 charset
-property (no char of any common sensitive word, simplified or traditional, is
-a table digit).
+### Usage guide
 
-Validated in headless Chromium via Playwright:
+#### 1. Initial setup (do this on a calm day)
 
-- Page boots behind plain HTTP on a LAN IP → Web Crypto banner, buttons
-  disabled (env: localhost works, `file://` works)
-- Keypair generation; storage wrap (PBKDF2 800k + AES-GCM); 64-hex-char pubkey;
-  12-emoji + hex fingerprint rendered
-- Contact add with live fingerprint preview; fingerprint deterministic across
-  views; contact removal
-- Encrypt → decrypt roundtrip with full unicode payload (emoji, CJK, math
-  glyphs), envelope pasted with IM-style line wrapping
-- Envelope layout asserted byte-exact: `0x01 | ephPub[32] | iv[12] | ct+tag`
-- Wrong passphrase → clean error; tampered ciphertext → GCM auth failure;
-  unknown version byte → rejected; garbage input → rejected
-- Backup record → wipe (two-click confirm) → restore → same pubkey → the
-  pre-backup envelope still decrypts
-- Passphrase change: re-wrapped ct/salt, pub preserved, new pass works, old
-  pass rejected
-- Reload after any of the above: identity found, app functional
+1. **Save a local copy:** Alongside using a hosted URL, save `index.html` and `crypto.js` in the same folder on your devices. Optionally write down their SHA-256 hashes on paper next to your contacts' fingerprints.
+2. **Generate your keypair:** Choose a **strong passphrase** (at least 4 random words).
+3. **Export your backup JSON:** Save the exported JSON somewhere durable (email it to yourself, store it on a USB stick, or attach it to a password manager). Because the private key inside is encrypted, its safety matches the strength of your passphrase.
+4. **Exchange and verify keys:** Share public keys with your friends, complete the voice verification ceremony below, and save each friend as a named contact.
+5. **Keep your passphrase safe:** If you forget your passphrase, neither your key nor any messages sent to it can ever be recovered.
 
-Two robustness fixes came out of testing and are already in the code:
+#### 2. The voice verification ceremony (~10 seconds)
 
-1. **Boot never awaits service worker registration** — a hung/slow
-   registration used to stall the default-tab selection. Registration is now
-   fire-and-forget, so offline support can only ever *add* functionality.
-2. **Invalid public-key errors are mapped** — Chromium rejects small-order
-   points (e.g. all-zero public key) with an empty error message from
-   `deriveBits`; Firefox instead returns an all-zero shared secret. Both paths
-   now produce a clear "zero shared secret" error instead of a blank failure.
+> Ideally, exchange public keys while you still have a trusted channel. If all trusted channels are already gone and you have to pass public keys over an untrusted channel, verify them over a **real-time voice call**. A voice call may be monitored or recorded, but tampering with a live friend's voice in real time is much harder.
 
-A later review pass hardened the implementation further (no wire-format or
-record-format changes): import enforces the spec's mandatory `pub` field and
-stores a canonical record; boot probes X25519 support separately from the
-secure-context check; the ephemeral send key never leaves WebCrypto in raw
-form; storage failures surface with explicit recovery guidance; the last-used
-contact is tracked by public key instead of display name; compose and decrypt
-hygiene controls are symmetric.
+1. Over a voice call, agree on when and how you will use this system (for example: *"If our group chat gets shut down, we'll coordinate here"*).
+2. Each person opens the page **on their own device** and reads aloud the **12-emoji fingerprint** displayed beneath their own public key.
+3. The other person checks those 12 emojis against the fingerprint shown for that contact on their screen. Verify in **both directions**.
+4. Treat unexpected encrypted messages outside agreed times (or from unverified keys) with suspicion — this operational check is what substitutes for cryptographic sender signatures.
+5. Never skip or delegate the fingerprint check. If you cannot verify a key's fingerprint, messages remain confidential against passive eavesdroppers, but **you have no guarantee of who sits on the other end**.
 
-Caveat for the record: this headless environment's service-worker machinery
-was wedged (the `register()` promise never resolves — happens *before* any of
-our code installs; sw.js serves fine). So the SW itself is validated
-structurally, not end-to-end here. **Post-deploy checklist:** load the page
-once over HTTPS, go offline, reload — confirm the app shell comes from the SW
-cache on your actual host. Everything else works regardless.
+#### 3. Sending a message
+
+Open the page (from the host, offline cache, or local `file://` copy) → select the recipient from your contacts → type your message → choose an output encoding → click **Encrypt** → copy the generated envelope and send it over *any* available channel.
+
+**Choosing between the two encodings:**
+- **CJK base4096 (default, tag `賒`) — best when the channel limits by *character count*:** Turns 100 bytes into ~67 Chinese characters. Although each CJK character takes 3 bytes in UTF-8 (~200 bytes total), many instant messengers enforce message limits by character count rather than byte size — counting each Chinese character as just 1 character. It also uses archaic characters that cannot form common words, avoiding naive keyword filters.
+- **Z85 (tag `A`) — best when the channel limits by *byte size* (or is ASCII-only):** Turns 100 bytes into 125 ASCII characters (125 bytes in UTF-8), improving on standard Base64 (which produces ~133 characters per 100 bytes).
+
+Pick whichever encoding fits your channel's rules; the receiver's page automatically detects the format from the first character.
+
+#### 4. Receiving a message
+
+Paste the received envelope into the decrypt box → enter your passphrase → read the message. Decrypted plaintext is never saved to storage; copy or screenshot what you need, then clear the screen.
+
+#### 5. Restoring on a new or lost device
+
+Open the Setup tab → choose **Restore from backup** → paste your exported backup JSON and enter your passphrase. Your identity and fingerprint are restored immediately without needing to repeat the voice ceremony.
+
+However, if you suspect a lost device might be accessed by someone else, **rotate your key and repeat the ceremony with your contacts**.
+
+#### 6. Key rotation or compromise recovery
+
+Wipe your existing key → generate a new identity → **repeat the voice verification ceremony** with your friends so they delete your old contact entry and save the new public key.
 
 ---
 
-*Spec versions in play: envelope `0x01`, text-form tags `A` (Z85) and `賒`
-(base4096), wrapper
-`v:1`, storage keys `.v1`, SW cache `v1`. Change any byte-level behavior = bump
-everything under it and document here.*
+## Design Details
+
+### Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| Per-message ephemeral X25519 (ECIES) | Generates a fresh AES key for every message, avoiding IV-reuse hazards. The sender retains no state, and the recipient's public key is the only pre-shared material required. |
+| HKDF-SHA-256 between ECDH and AES | Provides clean cryptographic domain separation using standard primitives available in Web Crypto and BouncyCastle. |
+| Self-contained envelope (ephemeral public key + IV + ciphertext) | The recipient needs zero prior state from the sender to decrypt a message. |
+| Mandatory passphrase on stored keys | Ensures private keys never sit in plaintext in `localStorage` or backup files; a wrong passphrase fails cleanly via AES-GCM authentication. |
+| Identical format for `localStorage` and backup files | One data structure and one code path; exported backups are safe to store on untrusted cloud drives assuming a strong passphrase. |
+| 12-emoji fingerprint (72 bits of SHA-256) | Easy to read aloud over a voice call. A short 4-emoji (24-bit) fingerprint can be brute-forced offline on a laptop in minutes; 72 bits is infeasible to brute-force within this threat model. |
+| Dual envelope encodings: base4096 (CJK) and Z85 | Originally the tool used Base64 (100 bytes → 133 chars). Z85 reduces this to 125 ASCII chars (125 bytes), which is ideal for channels that limit by **byte size**. However, many IMs limit messages by **character count**, counting a 3-byte UTF-8 Chinese character as 1 character — so CJK base4096 packs 100 bytes into ~67 characters while also using archaic characters that avoid keyword filters. Users can choose whichever fits their channel. |
+| No sender signatures, timestamps, or AAD | Keeps the protocol stateless, minimal, and easy to audit or reimplement in an afternoon. |
+
+---
+
+### Protocol v1 specification (byte-exact)
+
+All raw X25519 keys are standard 32-byte little-endian u-coordinate byte strings—identical across Web Crypto, BouncyCastle, and libsodium. Binary fields inside the JSON key record use standard padded base64.
+
+#### Public key encoding
+
+Public keys are exchanged as **64-character lowercase hexadecimal strings** matching `^[0-9a-f]{64}$`. Using hex (`0-9a-f` only) prevents instant-messaging apps from mangling keys via autocorrect or turning character runs like base64's `+/=` into emojis. Decoders tolerate uppercase hex and embedded whitespace (such as line wraps inserted by chat apps), and reject everything else.
+
+#### Message envelope layout
+
+At the byte level, an envelope has a fixed binary layout. For copy-pasting over text channels, those bytes are wrapped in a tagged text encoding:
+
+```
+text form = TAG || codec( 0x01 | ephPub[32] | iv[12] | ciphertext )
+```
+
+- `TAG` — A single leading character identifying the text encoding so the decoder knows how to parse the payload:
+  - `賒` (U+8CD2) = **base4096** (default in the UI)
+  - `A` = **Z85**
+  Tags are matched strictly (case-sensitive, no untagged fallback) and are **independent of the protocol version byte**: the tag specifies how the outer text is encoded, while `0x01` inside specifies the binary protocol version.
+- Decoders strip all whitespace before inspecting the tag or payload, so line wraps inserted by chat or email clients do not break decryption. Encoders always output a single compact string.
+
+Binary envelope fields:
+
+- `0x01` — 1-byte protocol version.
+- `ephPub` — 32-byte public key of a **per-message ephemeral** X25519 keypair, generated during encryption and immediately discarded.
+- `iv` — 12 uniform random bytes.
+- `ciphertext` — AES-256-GCM encryption of the UTF-8 plaintext, with the 128-bit authentication tag appended at the end (the standard layout in both Web Crypto and Java/BouncyCastle).
+- No AAD (additional authenticated data) is used.
+- To decrypt, the recipient reads `ephPub` from the envelope and combines it with their own keypair from storage.
+
+#### Text encoding: base4096 (tag `賒`)
+
+Tag `賒` encodes the binary envelope in **base4096**, packing 12 bits into each CJK character (3 bytes → 2 characters, or ~67 characters per 100 bytes). Even though each CJK character takes 3 bytes in UTF-8, many instant-messaging apps enforce length limits by **character count** rather than byte count—so 100 bytes of data uses only ~67 characters of your limit (nearly half the character count of Z85 or Base64). In addition, every digit is an archaic nature- or object-radical character, so the output looks like classical text while **incapable of spelling any common modern Chinese words (simplified or traditional)**, giving naive keyword filters nothing to trigger on.
+
+- **Character table:** 4,096 characters defined in `B4096_TABLE` in `crypto.js` (the authoritative source), ordered strictly by codepoint from U+4E62 to U+8CCF. Every character lies in the Unicode BMP CJK Unified Ideographs block and predates Unicode 5.1, ensuring broad font support across devices.
+- **Deterministic construction of the character set:**
+  Starting from the Unicode 18.0 `kRSUnicode` metadata, filter for characters belonging to 47 nature/object radicals (`土山木水牛田石竹糸羊羽艸虫角谷豆豕豸貝車酉里金長門阜隹雨青非面革韋韭音頁風飛食首香馬魚鳥鹿龍龜`), remove every character encodable in GB2312 as well as every character in the *List of Frequently Used Characters in Modern Chinese* (《现代汉语常用字表》, 3,500 chars) and *List of Generally Used Characters in Modern Chinese* (《现代汉语通用字表》, 7,000 chars), and sort by codepoint. The first 4,096 characters form the digit table; the next three are reserved control characters:
+  - `PAD1`: `賐` (U+8CD0)
+  - `PAD2`: `賑` (U+8CD1)
+  - `TAG`: `賒` (U+8CD2)
+  *(Note: a tiny handful of rare traditional character combinations—such as `賄賂`—remain in the set and could appear by pure chance roughly once every 100,000 messages.)*
+- **Full groups:** Each 3-byte group is read in **big-endian** order as a 24-bit integer and emitted as 2 base-4096 digits, **most significant digit first**.
+- **Tails:**
+  - A 1-byte remainder is encoded as one digit (`byte << 4`) followed by `PAD1` (`賐`).
+  - A 2-byte remainder is encoded as two digits (`16 data bits << 8` across a 24-bit slot) followed by `PAD2` (`賑`).
+  The explicit trailing `PAD` marker removes any length ambiguity between a 2-character tail and a full 2-character group.
+- **Strict validation:** Decoders reject any character outside the table, any `PAD` marker not at the end of the string, any invalid character count, and any non-zero padding bits in a tail.
+
+Test vectors:
+- `01 02 03` → `圼嶖`
+- `01` → `圼賐`
+- `01 02` → `圼嶒賑`
+
+#### Text encoding: Z85 (tag `A`)
+
+Tag `A` encodes the binary envelope using **Z85** (ZeroMQ's base85 variant: 4 bytes → 5 ASCII characters, or 125 characters/bytes per 100 bytes of input, compared to ~133 in Base64). Because every character is single-byte ASCII, Z85 is the most efficient choice when a channel enforces message limits by **byte size** rather than character count. Its alphabet also deliberately omits quotes and backslashes so strings survive JSON, shell, and Markdown contexts unescaped:
+
+```
+0-9 a-z A-Z . - : + = ^ ! / * ? & < > ( ) [ ] { } @ % $ #
+```
+
+Digits are ordered 0–84 as listed above; the `Z85` constant in `crypto.js` is normative.
+
+- **Full groups:** Each 4-byte group is read **big-endian** as an unsigned 32-bit integer and written as 5 base-85 digits, **most significant digit first** (`d4 = floor(value / 85⁴)`). Unlike Ascii85, there is no `z` shorthand for all-zero groups.
+- **Tails:** Because envelope lengths (`45 + plaintext length`) are not always multiples of 4, tail handling is defined explicitly:
+  - **Encoding:** The final `r` bytes (`r` = 1..3) are zero-padded on the right to 4 bytes, encoded as 5 digits, and only the first `r + 1` characters are emitted.
+  - **Decoding:** A trailing `k`-character group (`k` = 2..4) is padded to 5 characters using the highest digit `#` (value 84), decoded into 4 bytes, and the first `k − 1` bytes are kept. A 1-character tail is never valid.
+- **Strict validation:** Decoders reject any character outside the alphabet, any length leaving a 1-character tail, and any 5-character group whose decoded value exceeds `2³² − 1` (valid tails padded with `#` never overflow `2³² − 1`).
+
+Test vectors:
+- `86 4F D2 6F B5 59 F7 5B` → `HelloWorld`
+- `01` → `0r`
+- `01 02` → `0rJ`
+- `01 02 03` → `0rJu`
+
+#### Key derivation
+
+```
+ss  = X25519(ephPriv, recipientPub)          // 32 bytes
+if ss == all zeros: REJECT (invalid or small-order public key)
+key = HKDF-SHA256(ikm  = ss,
+                  salt = ephPub || recipientPub,   // 64 bytes
+                  info = UTF-8("ecdh.html/v1"),
+                  L    = 32)
+```
+
+#### Public key fingerprint
+
+The canonical fingerprint is the full 32-byte lowercase hex **SHA-256 digest of the raw 32-byte public key**. In addition, the UI renders the first 72 bits of that digest as **12 emojis** (6 bits per emoji from a fixed 64-emoji table) for easy voice comparison.
+
+Exact emoji mapping for implementers:
+Let `v` be the 72-bit big-endian integer formed by bytes `0..8` of `SHA-256(pub)`. Repeat 12 times for `i = 0..11`:
+`emoji[i] = EMOJI[v mod 64]`, `v = floor(v / 64)`.
+The **leftmost** emoji represents the *least*-significant 6 bits of the 72-bit prefix. `EMOJI` is the 64-entry array in `crypto.js`.
+
+Test vector (32-byte all-zero public key):
+- SHA-256 hex: `66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925`
+- 12-emoji fingerprint: `🌲 🦁 🎩 🌋 🐙 🌊 🎵 🐯 🥑 🌊 🐰 🧊`
+
+#### Private key wrapper format (`localStorage` and backup JSON)
+
+```json
+{
+  "v": 1,
+  "type": "x25519-private",
+  "pub": "<hex, raw 32-byte public key, plaintext>",
+  "kdf": "PBKDF2-HMAC-SHA256",
+  "iter": 800000,
+  "salt": "<base64, 16 bytes>",
+  "cipher": "AES-256-GCM",
+  "iv": "<base64, 12 bytes>",
+  "ct": "<base64, AES-GCM of the raw 32-byte private scalar + 16-byte tag>"
+}
+```
+
+- The wrapping key is derived via `PBKDF2-HMAC-SHA256(passphrase, salt, iter)`. Importers honor the `iter` value stored in the JSON record rather than hardcoding 800,000.
+- The `pub` field is mandatory; on import, the decrypted private scalar is multiplied by the base point to verify that it matches `pub`.
+- `localStorage` keys used by the page:
+  - `ecdh.key.v1` — the JSON record above
+  - `ecdh.contacts.v1` — `[{"name": "...", "pub": "<64-char hex>"}]`
+  - `ecdh.lastcontact.v1` — hex public key of the last selected contact
+
+#### BouncyCastle / JVM interoperability reference
+
+If you want to build a compatible desktop or Android tool using BouncyCastle / JCE:
+
+- **Wrapping raw 32-byte keys into ASN.1 DER:**
+  - PKCS#8 X25519 private key prefix: `302e020100300506032b656e04220420 || raw32`
+  - SPKI X25519 public key prefix: `302a300506032b656e032100 || raw32`
+- **X25519 agreement:** `new X25519PrivateKeyParameters(scalar, 0)` with `X25519Agreement` produces the identical 32-byte little-endian shared secret as Web Crypto's `deriveBits`. (Standard X25519 clamping is handled internally during scalar multiplication in all implementations.)
+- **HKDF:** `new HKDFBytesGenerator(new SHA256Digest())` initialized with `new HKDFParameters(ikm, salt, info)`, then `generateBytes(out, 0, 32)`.
+- **PBKDF2:** JCE `SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")` (256-bit key) or BouncyCastle `PKCS5S2ParametersGenerator(new SHA256Digest())`.
+- **AES-GCM:** JCE `Cipher.getInstance("AES/GCM/NoPadding")` with `new GCMParameterSpec(128, iv)` appends the 16-byte authentication tag to the end of the ciphertext, matching Web Crypto.
+
+#### Implementation and testing notes
+
+- **Cross-implementation test suite (`tests/crypto.test.js`):** Exercises `crypto.js` directly against Node's OpenSSL-backed `crypto` module. It verifies DER prefixes, envelope binary layout, tag dispatch, Z85 and base4096 encoding/decoding, HKDF key derivation, PBKDF2 key wrapping, emoji fingerprints, base4096 sensitive-word exclusion, and rejection of malformed inputs (all-zero shared secrets, tampered ciphertexts, unknown versions/tags, non-canonical tails, wrong passphrases, and mismatched public keys).
+- **Browser end-to-end validation:** Tested in headless Chromium (Playwright) covering HTTP insecure-context warning banners, key generation, contact fingerprint previews, full Unicode encrypt/decrypt round-trips with line-wrapped envelopes, backup/wipe/restore flows, and passphrase changes.
+- **Browser quirks handled in code:**
+  1. *Non-blocking service worker registration:* Startup does not `await` `navigator.serviceWorker.register()`, preventing a slow or stuck service worker registration from delaying UI initialization.
+  2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are normalized to a clear `"zero shared secret"` error.
+
+---
+
+*Current spec versions: envelope `0x01`, text-encoding tags `賒` (base4096) and `A` (Z85), key wrapper `v: 1`, `localStorage` keys `.v1`, service worker cache `v1`. Any byte-level format change must bump the corresponding version identifier and be documented here.*
