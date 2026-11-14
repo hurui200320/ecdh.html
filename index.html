@@ -96,9 +96,10 @@
 </header>
 
 <div id="ctx-warn" class="ctx-banner" hidden>
-  <b>Web Crypto is unavailable here.</b> This page only works in a secure context:
-  served over HTTPS, from <code>localhost</code>, or opened as a local file
-  (<code>file://</code>). Buttons are disabled.
+  <b id="ctx-warn-title">Web Crypto is unavailable here.</b>
+  <span id="ctx-warn-msg">This page only works in a secure context: served over HTTPS,
+  from <code>localhost</code>, or opened as a local file (<code>file://</code>).
+  Buttons are disabled.</span>
 </div>
 
 <nav id="tabs" role="tablist">
@@ -174,6 +175,7 @@
         <summary>Danger zone</summary>
         <p class="hint">Wiping destroys the private key on this device. Messages encrypted to it become <b>permanently unreadable</b> (unless you restore a backup). Export first.</p>
         <button id="btn-wipe" class="danger" type="button">Wipe key from this device</button>
+        <div id="wipe-err" class="err" hidden></div>
       </details>
     </div>
   </div>
@@ -216,6 +218,7 @@
     <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
     <textarea id="env-out" rows="4" readonly hidden></textarea>
     <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
+    <button id="btn-clear-msg" type="button" hidden>Clear</button>
     <div id="enc-err" class="err" hidden></div>
   </div>
 </section>
@@ -299,6 +302,8 @@
  * See README.md for the pinned threat model and byte-exact spec.
  * ===================================================================== */
 
+/* ====== BEGIN testable core — DOM-free; sliced out verbatim by tests/crypto.test.js ====== */
+
 /* ---------- tiny dom/format helpers ---------- */
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -314,6 +319,11 @@ function b64dec(str){
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
+}
+function b64decSafe(str){
+  const u = b64dec(str);
+  if (u.length !== 32) throw new Error("Expected 32 bytes after base64 decoding.");
+  return u;
 }
 function hex(u8){
   let s = "";
@@ -335,11 +345,16 @@ function esc(s){
 const TE = new TextEncoder();
 const TD = new TextDecoder();
 
+const FLASH_TIMERS = new WeakMap();
 function flash(btn, txt){
   if (!btn) return;
+  clearTimeout(FLASH_TIMERS.get(btn));
   const old = btn.textContent;
   btn.textContent = txt;
-  setTimeout(() => { btn.textContent = old; }, 1600);
+  FLASH_TIMERS.set(btn, setTimeout(() => {
+    FLASH_TIMERS.delete(btn);
+    btn.textContent = old;
+  }, 1600));
 }
 async function copyText(t, btn){
   let ok = false;
@@ -376,6 +391,7 @@ async function genKeyPair(){
   return { priv: pk8.slice(16), pub };
 }
 async function importPriv(rawScalar){
+  if (rawScalar.length !== 32) throw new Error("Private scalar must be exactly 32 bytes.");
   return crypto.subtle.importKey("pkcs8", cat(PKCS8_X25519, rawScalar),
     { name: "X25519" }, false, ["deriveBits"]);
 }
@@ -392,7 +408,7 @@ async function x25519(privScalar, peerPubRaw){
   } catch {
     // Some backends (e.g. Chromium) reject small-order/invalid points with an
     // empty error; Firefox returns an all-zero secret instead (caught below).
-    throw new Error("Public key is invalid (rejected by crypto backend, or all-zero shared secret).");
+    throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
   }
   if (out.length !== 32) throw new Error("Unexpected shared secret length.");
   return out;
@@ -406,18 +422,34 @@ async function hkdf32(ikm, salt){
 async function sha256(bytes){
   return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
 }
+async function x25519Supported(){
+  try {
+    await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+    return true;
+  } catch { return false; }
+}
 
 /* ---------- messages (envelope v1) ---------- */
 async function encryptTo(recipPubRaw, text){
-  const eph = await genKeyPair();
-  const ss = await x25519(eph.priv, recipPubRaw);
+  // Ephemeral keypair stays non-extractable inside WebCrypto: the private
+  // scalar is never exported, imported, or visible to page script.
+  const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
+  const ephPub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+  let ss;
+  try {
+    ss = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: "X25519", public: await importPub(recipPubRaw) }, kp.privateKey, 256));
+  } catch {
+    // Same small-order/invalid-point quirk as x25519() above.
+    throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
+  }
   if (isZero(ss)) throw new Error("Recipient public key is invalid (zero shared secret).");
-  const key = await hkdf32(ss, cat(eph.pub, recipPubRaw));
+  const key = await hkdf32(ss, cat(ephPub, recipPubRaw));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["encrypt"]);
   const ct = new Uint8Array(await crypto.subtle.encrypt(
     { name: "AES-GCM", iv, tagLength: 128 }, aes, TE.encode(text)));
-  return b64enc(cat(new Uint8Array([VER]), eph.pub, iv, ct));
+  return b64enc(cat(new Uint8Array([VER]), ephPub, iv, ct));
 }
 async function decryptWith(privScalar, ownPubRaw, envStr){
   let u;
@@ -475,6 +507,23 @@ async function unwrapScalar(pass, rec){
   return pt;
 }
 
+/* Import-side validation: the spec requires the pub field, verified against
+ * the private scalar. Returns the canonical record to store/export (extra
+ * fields dropped, iter normalized to the integer actually used). */
+async function recordFromImport(rec, scalar){
+  if (!rec || typeof rec !== "object") throw new Error("Not an ecdh.html v1 key record.");
+  if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
+  const recPub = b64decSafe(rec.pub);
+  const derivedPub = await pubFromPriv(scalar);
+  if (hex(recPub) !== hex(derivedPub))
+    throw new Error("Record is internally inconsistent (pub does not match private key).");
+  return {
+    v: 1, type: "x25519-private", pub: b64enc(derivedPub),
+    kdf: rec.kdf, iter: rec.iter | 0, cipher: rec.cipher,
+    salt: rec.salt, iv: rec.iv, ct: rec.ct,
+  };
+}
+
 /* ---------- fingerprints: sha256 -> 72 bits -> 12 emoji ---------- */
 const EMOJI = ["🍎","🍌","🐻","🐝","🚲","🐦","⛵","🎂","🐱","🌵","🐊","🌙","☕","🎲","🐬","🥚",
   "🐘","👀","🦊","🐸","🍇","🎸","🐹","🎩","🏠","🧊","🧥","🪁","🍋","🦁","🥭","🎵",
@@ -488,6 +537,7 @@ async function fpOf(pubRaw){
   for (let i = 0; i < 12; i++){ em.push(EMOJI[Number(v & 63n)]); v >>= 6n; }
   return { emoji: em.join(" "), hexs: hex(d) };
 }
+/* ====== END testable core ====== */
 
 /* ---------- storage ---------- */
 const LS_KEY = "ecdh.key.v1";
@@ -499,8 +549,19 @@ let OWN_PUB = null;   // Uint8Array(32)
 let CONTACTS = [];    // [{name, pub}]
 let WIPE_ARMED = false, WIPE_TIMER = 0;
 
-function saveRecord(){ localStorage.setItem(LS_KEY, JSON.stringify(RECORD)); }
-function saveContacts(){ localStorage.setItem(LS_CONTACTS, JSON.stringify(CONTACTS)); }
+function saveRecord(){
+  try { localStorage.setItem(LS_KEY, JSON.stringify(RECORD)); }
+  catch {
+    throw new Error("Could not persist the key to browser storage (blocked or full). "
+      + "Export your backup now — this key will be lost on reload.");
+  }
+}
+function saveContacts(){
+  try { localStorage.setItem(LS_CONTACTS, JSON.stringify(CONTACTS)); }
+  catch {
+    throw new Error("Could not persist contacts to browser storage (blocked or full).");
+  }
+}
 function loadState(){
   try { RECORD = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { RECORD = null; }
   try { CONTACTS = JSON.parse(localStorage.getItem(LS_CONTACTS) || "[]"); } catch { CONTACTS = []; }
@@ -544,8 +605,8 @@ function renderDecryptPre(){
 async function renderContacts(){
   const sel = $("#contact-sel");
   if (CONTACTS.length){
-    const lastName = localStorage.getItem(LS_LAST);
-    let idx = CONTACTS.findIndex(c => c.name === lastName);
+    const lastPub = localStorage.getItem(LS_LAST);
+    let idx = CONTACTS.findIndex(c => c.pub === lastPub);
     if (idx < 0) idx = 0;
     sel.innerHTML = CONTACTS.map((c, i) =>
       `<option value="${i}"${i === idx ? " selected" : ""}>${esc(c.name)}</option>`).join("");
@@ -579,12 +640,14 @@ $("#gen-pass").addEventListener("input", (e) => {
   $("#gen-warn").hidden = v.length >= 12 || v.length === 0;
 });
 
-$("#btn-generate").addEventListener("click", async (btn) => {
+$("#btn-generate").addEventListener("click", async (e) => {
   const err = $("#gen-err"); hideErr(err);
+  const btn = e.target;
   const p1 = $("#gen-pass").value, p2 = $("#gen-pass2").value;
   if (!p1) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
   if (p1 !== p2) return showErr(err, "Passphrases don't match.");
-  btn.target.disabled = true; btn.target.textContent = "Generating…";
+  btn.disabled = true; btn.textContent = "Generating…";
+  let ok = false;
   try {
     const { priv, pub } = await genKeyPair();
     const w = await wrapScalar(p1, priv, PBKDF2_ITER);
@@ -599,39 +662,36 @@ $("#btn-generate").addEventListener("click", async (btn) => {
     saveRecord();
     $("#gen-pass").value = $("#gen-pass2").value = "";
     await renderSetup();
-    flash(btn.target, "Generated ✓");
-  } catch (e){ showErr(err, e.message || "Generation failed."); }
-  finally { btn.target.disabled = false; btn.target.textContent = "Generate keypair"; }
+    ok = true;
+  } catch (ex){ showErr(err, ex.message || "Generation failed."); }
+  finally { btn.disabled = false; btn.textContent = "Generate keypair"; }
+  if (ok) flash(btn, "Generated ✓");
 });
 
-$("#btn-import").addEventListener("click", async (btn) => {
+$("#btn-import").addEventListener("click", async (e) => {
   const err = $("#imp-err"); hideErr(err);
+  const btn = e.target;
   let rec;
   try { rec = JSON.parse($("#imp-json").value); }
   catch { return showErr(err, "Not valid JSON — paste the exported backup record or use the file button."); }
+  if (!rec || typeof rec !== "object")
+    return showErr(err, "That JSON is not an ecdh.html key record (expected an object).");
   const pass = $("#imp-pass").value;
   if (!pass) return showErr(err, "Enter the passphrase for this record.");
-  btn.target.disabled = true; btn.target.textContent = "Restoring…";
+  btn.disabled = true; btn.textContent = "Restoring…";
+  let ok = false;
   try {
-    const scalar = await unwrapScalar(pass, rec);  // throws on wrong passphrase
-    const derivedPub = await pubFromPriv(scalar);
-    if (rec.pub && hex(b64decSafe(rec.pub)) !== hex(derivedPub))
-      throw new Error("Record is internally inconsistent (pub does not match private key).");
-    if (!rec.pub) rec.pub = b64enc(derivedPub);
-    RECORD = rec; OWN_PUB = b64dec(rec.pub);
+    const scalar = await unwrapScalar(pass, rec);   // throws on wrong passphrase
+    RECORD = await recordFromImport(rec, scalar);   // throws on missing/mismatched pub
+    OWN_PUB = b64dec(RECORD.pub);
     saveRecord();
     $("#imp-json").value = ""; $("#imp-pass").value = "";
     await renderSetup();
-    flash(btn.target, "Restored ✓");
-  } catch (e){ showErr(err, e.message || "Restore failed."); }
-  finally { btn.target.disabled = false; btn.target.textContent = "Restore key"; }
+    ok = true;
+  } catch (ex){ showErr(err, ex.message || "Restore failed."); }
+  finally { btn.disabled = false; btn.textContent = "Restore key"; }
+  if (ok) flash(btn, "Restored ✓");
 });
-
-function b64decSafe(s){
-  const u = b64dec(s);
-  if (u.length !== 32) throw new Error("bad pub length");
-  return u;
-}
 
 $("#imp-file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
@@ -653,26 +713,29 @@ $("#btn-export").addEventListener("click", () => {
 });
 $("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.target));
 
-$("#btn-chpass")  .addEventListener("click", async (btn) => {
+$("#btn-chpass").addEventListener("click", async (e) => {
   const err = $("#ch-err"); hideErr(err);
+  const btn = e.target;
   const old = $("#ch-old").value, n1 = $("#ch-new").value, n2 = $("#ch-new2").value;
   if (!RECORD) return showErr(err, "No key stored.");
   if (!old) return showErr(err, "Enter the current passphrase.");
   if (!n1 || n1 !== n2) return showErr(err, "New passphrases are empty or don't match.");
-  btn.target.disabled = true; btn.target.textContent = "Working…";
+  btn.disabled = true; btn.textContent = "Working…";
+  let ok = false;
   try {
     const scalar = await unwrapScalar(old, RECORD);
-    const w = await wrapScalar(n1, scalar, RECORD.iter || PBKDF2_ITER);
+    const w = await wrapScalar(n1, scalar, RECORD.iter);
     RECORD.salt = b64enc(w.salt); RECORD.iv = b64enc(w.iv); RECORD.ct = b64enc(w.ct);
     saveRecord();
     $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
-    flash(btn.target, "Changed ✓");
-  } catch (e){ showErr(err, e.message || "Failed."); }
-  finally { btn.target.disabled = false; btn.target.textContent = "Change passphrase"; }
+    ok = true;
+  } catch (ex){ showErr(err, ex.message || "Failed."); }
+  finally { btn.disabled = false; btn.textContent = "Change passphrase"; }
+  if (ok) flash(btn, "Changed ✓");
 });
 
-$("#btn-wipe").addEventListener("click", async (btn) => {
-  const b = btn.target;
+$("#btn-wipe").addEventListener("click", async (e) => {
+  const b = e.target;
   if (!RECORD) return;
   if (!WIPE_ARMED){
     WIPE_ARMED = true;
@@ -689,10 +752,12 @@ $("#btn-wipe").addEventListener("click", async (btn) => {
   WIPE_ARMED = false;
   b.classList.remove("armed");
   b.textContent = "Wipe key from this device";
-  localStorage.removeItem(LS_KEY);
-  RECORD = null; OWN_PUB = null;
-  await renderSetup();
-  flash(b, "Wiped ✓");
+  try {
+    localStorage.removeItem(LS_KEY);
+    RECORD = null; OWN_PUB = null;
+    await renderSetup();
+    flash(b, "Wiped ✓");
+  } catch (ex){ showErr($("#wipe-err"), ex.message || "Wipe failed."); }
 });
 
 /* ---------- contacts & encrypt handlers ---------- */
@@ -716,23 +781,27 @@ $("#ct-pub").addEventListener("input", () => {
   }, 250);
 });
 
-$("#btn-add-contact").addEventListener("click", async (btn) => {
+$("#btn-add-contact").addEventListener("click", async (e) => {
   const err = $("#ct-err"); hideErr(err);
+  const btn = e.target;
   const name = $("#ct-name").value.trim() || "friend";
   const pubStr = $("#ct-pub").value.trim();
   if (!pubStr) return showErr(err, "Paste their public key (base64).");
   let pub;
   try { pub = b64dec(pubStr); } catch { return showErr(err, "Public key is not valid base64."); }
   if (pub.length !== 32) return showErr(err, "Public key must decode to exactly 32 bytes.");
-  if (CONTACTS.some(c => c.pub === b64enc(pub)))
+  const pubB64 = b64enc(pub);   // canonical form
+  if (CONTACTS.some(c => c.pub === pubB64))
     return showErr(err, "This public key is already saved.");
-  CONTACTS.push({ name, pub: b64enc(pub) });
-  saveContacts();
-  localStorage.setItem(LS_LAST, name);
+  CONTACTS.push({ name, pub: pubB64 });
+  try {
+    saveContacts();
+    localStorage.setItem(LS_LAST, pubB64);   // last-contact tracked by key, not name
+  } catch (ex){ return showErr(err, ex.message || "Could not save the contact."); }
   $("#ct-name").value = ""; $("#ct-pub").value = "";
   $("#ct-fp").hidden = true;
   await renderContacts();
-  flash(btn.target, "Added ✓");
+  flash(btn, "Added ✓");
 });
 
 $("#contact-sel").addEventListener("change", showSelFp);
@@ -745,39 +814,53 @@ $("#btn-del-contact").addEventListener("click", async () => {
   await renderContacts();
 });
 
-$("#btn-encrypt").addEventListener("click", async (btn) => {
+$("#btn-encrypt").addEventListener("click", async (e) => {
   const err = $("#enc-err"); hideErr(err);
+  const btn = e.target;
   const c = CONTACTS[$("#contact-sel").value | 0];
   if (!c) return showErr(err, "Pick a contact first.");
   let pub;
   try { pub = b64dec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
-  btn.target.disabled = true; btn.target.textContent = "Encrypting…";
+  $("#btn-clear-msg").hidden = true;
+  btn.disabled = true; btn.textContent = "Encrypting…";
   try {
     const env = await encryptTo(pub, $("#msg").value);
     $("#env-out").value = env;
     $("#env-out").hidden = false;
     $("#btn-copy-env").hidden = false;
-    localStorage.setItem(LS_LAST, c.name);
-  } catch (e){ showErr(err, e.message || "Encryption failed."); }
-  finally { btn.target.disabled = false; btn.target.textContent = "Encrypt"; }
+    $("#btn-clear-msg").hidden = false;
+    try { localStorage.setItem(LS_LAST, c.pub); } catch { /* non-fatal */ }
+  } catch (ex){ showErr(err, ex.message || "Encryption failed."); }
+  finally { btn.disabled = false; btn.textContent = "Encrypt"; }
 });
 
 $("#btn-copy-env").addEventListener("click", (b) => copyText($("#env-out").value, b.target));
-$("#msg").addEventListener("input", () => { hideErr($("#enc-err")); });
+$("#msg").addEventListener("input", () => {
+  hideErr($("#enc-err"));
+  $("#btn-clear-msg").hidden = $("#msg").value === "" && $("#env-out").hidden;
+});
+$("#btn-clear-msg").addEventListener("click", () => {
+  $("#msg").value = "";
+  $("#env-out").value = ""; $("#env-out").hidden = true;
+  $("#btn-copy-env").hidden = true;
+  $("#btn-clear-msg").hidden = true;
+  hideErr($("#enc-err"));
+});
 
 /* ---------- decrypt handlers ---------- */
 ["env-in"].forEach(id => $("#" + id).addEventListener("input", () => hideErr($("#dec-err"))));
 
-$("#btn-decrypt").addEventListener("click", async (btn) => {
+$("#btn-decrypt").addEventListener("click", async (e) => {
   const err = $("#dec-err"); hideErr(err);
+  const btn = e.target;
   if (!RECORD) return showErr(err, "No identity on this device — Setup tab first.");
   const env = $("#env-in").value;
   const pass = $("#dec-pass").value;
   if (!env.trim()) return showErr(err, "Paste an envelope first.");
   if (!pass) return showErr(err, "Enter the passphrase.");
-  btn.target.disabled = true; btn.target.textContent = "Decrypting…";
+  btn.disabled = true; btn.textContent = "Decrypting…";
   $("#plain-out").hidden = true;
   $("#btn-copy-plain").hidden = true;
   $("#btn-clear-plain").hidden = true;
@@ -788,8 +871,9 @@ $("#btn-decrypt").addEventListener("click", async (btn) => {
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;
     $("#btn-clear-plain").hidden = false;
-  } catch (e){ showErr(err, e.message || "Decryption failed."); }
-  finally { btn.target.disabled = false; btn.target.textContent = "Decrypt"; }
+    $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
+  } catch (ex){ showErr(err, ex.message || "Decryption failed."); }
+  finally { btn.disabled = false; btn.textContent = "Decrypt"; }
 });
 
 $("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.target));
@@ -806,10 +890,25 @@ for (const b of $$("#tabs .tabbtn"))
   b.addEventListener("click", () => showTab(b.dataset.tab));
 
 (async function boot(){
-  const cryptoOK = !!(window.crypto && crypto.subtle && window.isSecureContext);
-  if (!cryptoOK){
+  const bail = (title, msg) => {
+    $("#ctx-warn-title").textContent = title;
+    $("#ctx-warn-msg").textContent = msg;
     $("#ctx-warn").hidden = false;
     for (const b of $$("main button")) b.disabled = true;
+  };
+  if (!window.isSecureContext){
+    bail("Web Crypto is unavailable here.",
+      "This page only works in a secure context: served over HTTPS, from localhost, or opened as a local file (file://). Buttons are disabled.");
+    return;
+  }
+  if (!(window.crypto && crypto.subtle)){
+    bail("Web Crypto is unavailable here.",
+      "This browser does not expose crypto.subtle. Update your browser, or open the page in a current one. Buttons are disabled.");
+    return;
+  }
+  if (!(await x25519Supported())){
+    bail("This browser is too old for ecdh.html.",
+      "Its Web Crypto has no X25519 support (Chrome/Edge 133+, Firefox 129+, or Safari 17+). Update the browser or use another device. Buttons are disabled.");
     return;
   }
   loadState();

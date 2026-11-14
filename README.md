@@ -164,6 +164,17 @@ use this for cross-implementation comparison. The page additionally renders the
 first 72 bits as 12 emoji (6 bits each, taken from the least-significant end,
 fixed 64-emoji alphabet) for reading aloud.
 
+Chunk order, spelled out for implementers: let `v` be the 72-bit big-endian
+integer built from digest bytes 0–8; then twelve times: `emoji[i] =
+ALPHABET[v mod 64]`, `v = floor(v / 64)`. The **leftmost** emoji carries the
+*least*-significant 6 bits. `ALPHABET` is the `EMOJI` array in `index.html`,
+in source order.
+
+Test vector: the 32-byte all-zero public key hashes to
+`66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925`;
+its 12-emoji fingerprint renders as
+`🌲 🦁 🎩 🌋 🐙 🌊 🎵 🐯 🥑 🌊 🐰 🧊`.
+
 ### Private key wrapper (single format: localStorage *and* backup file)
 
 ```json
@@ -254,6 +265,7 @@ contact and add the new one.
 | `sw.js` | Cache-first service worker (offline) |
 | `manifest.json` | Minimal PWA manifest |
 | `icon.svg` | Icon |
+| `tests/` | Crypto-core cross-check harness (Node, no browser) |
 
 - **HTTPS (or localhost) is mandatory.** Browsers expose Web Crypto
   (`crypto.subtle`) only in secure contexts. Serving over plain `http://` on a
@@ -278,6 +290,19 @@ Local smoke test:
 python3 -m http.server 8000
 # open http://localhost:8000  (localhost = secure context)
 ```
+
+Crypto-core cross-check (no browser needed; Node >= 18.4 for X25519):
+
+```bash
+node tests/crypto.test.js
+```
+
+Slices the DOM-free crypto core out of `index.html` and verifies the DER
+prefixes, envelope layout, HKDF derivation, PBKDF2 wrapper, and emoji
+fingerprints against Node's independent OpenSSL implementation (the same
+operations as the BouncyCastle recipe above), plus the documented failure
+paths: zero shared secret, tampered ciphertext, wrong version byte,
+truncated/garbage input, wrong passphrase, inconsistent records.
 
 Validated in headless Chromium via Playwright:
 
@@ -307,6 +332,14 @@ Two robustness fixes came out of testing and are already in the code:
    points (e.g. all-zero public key) with an empty error message from
    `deriveBits`; Firefox instead returns an all-zero shared secret. Both paths
    now produce a clear "zero shared secret" error instead of a blank failure.
+
+A later review pass hardened the implementation further (no wire-format or
+record-format changes): import enforces the spec's mandatory `pub` field and
+stores a canonical record; boot probes X25519 support separately from the
+secure-context check; the ephemeral send key never leaves WebCrypto in raw
+form; storage failures surface with explicit recovery guidance; the last-used
+contact is tracked by public key instead of display name; compose and decrypt
+hygiene controls are symmetric.
 
 Caveat for the record: this headless environment's service-worker machinery
 was wedged (the `register()` promise never resolves — happens *before* any of
