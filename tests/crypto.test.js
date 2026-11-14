@@ -30,7 +30,7 @@ const nc = require("node:crypto");
 /* ---- the core, required directly (the same bytes the browser loads) ---- */
 const core = require("../crypto.js");
 
-const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
+const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, MAX_PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
         LOW_ORDER_X25519, isLowOrderPub, isNonCanonicalPub, cleanContactName,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv, parseEnv,
@@ -275,6 +275,8 @@ async function makeRecord(priv, pub, pass, iter){
     assert.strictEqual(isNonCanonicalPub(pubDec(ncHex)), true, "isNonCanonicalPub flags " + ncHex.slice(0, 8));
     assert.throws(() => contactsFromImport([{ name: "NonCanon", pub: ncHex }]), /non-canonical|low-order|invalid/i,
       "contactsFromImport rejects non-canonical key " + ncHex.slice(0, 8));
+    await assert.rejects(encryptTo(pubDec(ncHex), new Uint8Array(4)), /non-canonical|low-order|invalid|zero|agreement/i,
+      "encryptTo rejects non-canonical recipient key " + ncHex.slice(0, 8));
   }
   await assert.rejects(encryptTo(new Uint8Array(32), "x"), /raw bytes|Uint8Array/i,
     "plaintext must be raw bytes, not a string");
@@ -335,7 +337,7 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 0 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: -100 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: true }), /bad field sizes/i);
-  await assert.rejects(unwrapScalar("x", { ...rec, iter: 100000001 }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, iter: MAX_PBKDF2_ITER + 1 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 4294967297 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: 123 }), /bad base64/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: "A".repeat(400) }), /bad field sizes/i);
@@ -345,7 +347,7 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(wrapScalar("pass", new Uint8Array(16), 1500), /32 bytes/i);
   await assert.rejects(wrapScalar("pass", priv, 0), /iteration/i);
   await assert.rejects(wrapScalar("pass", priv, 1500.5), /iteration/i);
-  await assert.rejects(wrapScalar("pass", priv, 100000001), /iteration/i);
+  await assert.rejects(wrapScalar("pass", priv, MAX_PBKDF2_ITER + 1), /iteration/i);
   await assert.rejects(unwrapScalar("x", { ...rec, kdf: "PBKDF2-HMAC-SHA512" }), /unsupported KDF/i);
   assert.strictEqual(PBKDF2_ITER, 800000, "production iteration count is pinned");
   const big = await makeRecord(priv, pub, "another pass", PBKDF2_ITER);
@@ -443,6 +445,9 @@ async function makeRecord(priv, pub, pass, iter){
     checkRuntime("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", { navigator: { standalone: true } }),
     null, "installed iPadOS Home Screen PWA passes");
   assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36 wxwork/4.1.0"),
+    { kind: "webview", label: "WeCom in-app WebView" }, "WeCom (Enterprise WeChat) UA detected");
+  assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36 MicroMessenger/8.0.50"),
     { kind: "webview", label: "WeChat in-app WebView" }, "WeChat UA detected");
   assert.deepStrictEqual(
@@ -506,16 +511,29 @@ async function makeRecord(priv, pub, pass, iter){
 
   const assetsMatch = swJs.match(/const\s+ASSETS\s*=\s*(\[[^\]]+\])/);
   assert.ok(assetsMatch, "sw.js defines ASSETS array");
+  const swAssetFiles = [];
   for (const rel of JSON.parse(assetsMatch[1])){
     const target = rel === "./" ? "index.html" : rel.replace(/^\.\//, "");
     assert.ok(fs.existsSync(path.join(rootDir, target)), "sw.js asset exists on disk: " + rel);
+    if (!swAssetFiles.includes(target)) swAssetFiles.push(target);
   }
+  const assetDigest = nc.createHash("sha256");
+  for (const target of swAssetFiles){
+    assetDigest.update(target + "\0");
+    assetDigest.update(fs.readFileSync(path.join(rootDir, target)));
+    assetDigest.update("\0");
+  }
+  const expectedCache = 'const CACHE = CACHE_PREFIX + "v1-' + assetDigest.digest("hex").slice(0, 12) + '";';
+  assert.ok(swJs.includes(expectedCache),
+    "sw.js CACHE version must match current assets (expected: " + expectedCache + ")");
   for (const requiredHeader of [
+    "Strict-Transport-Security: max-age=63072000; includeSubDomains",
     "Content-Security-Policy: frame-ancestors 'none'",
     "X-Frame-Options: DENY",
     "X-Content-Type-Options: nosniff",
     "Referrer-Policy: no-referrer",
     "Cross-Origin-Opener-Policy: same-origin",
+    "Cache-Control: no-cache",
   ]){
     assert.ok(headersTxt.includes(requiredHeader), "_headers includes " + requiredHeader);
   }

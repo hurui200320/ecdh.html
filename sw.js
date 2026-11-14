@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // ecdh.html service worker — cache-first app shell.
-// Bump CACHE version whenever any file below (or index.html) changes.
+// Bump CACHE version whenever any file below (or index.html) changes
+// (node tests/crypto.test.js verifies the 12-hex asset digest below).
 const CACHE_PREFIX = "ecdh-html-";
-const CACHE = CACHE_PREFIX + "v1-20261115060000";
+const CACHE = CACHE_PREFIX + "v1-2fe7d39dcaed";
 const ASSETS = ["./", "./index.html", "./crypto.js", "./manifest.json", "./icon.svg"];
 const ASSET_URLS = new Set(ASSETS.map((u) => new URL(u, self.location).href));
 

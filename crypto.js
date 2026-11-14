@@ -381,8 +381,8 @@ async function encryptTo(recipPubRaw, plaintext){
   if (!(plaintext instanceof Uint8Array))
     throw new Error("Plaintext must be raw bytes (Uint8Array) — encode text with TE.encode().");
   const recipKey = await importPub(recipPubRaw);
-  if (isLowOrderPub(recipPubRaw))
-    throw new Error("Recipient public key is invalid (zero shared secret).");
+  if (isLowOrderPub(recipPubRaw) || isNonCanonicalPub(recipPubRaw))
+    throw new Error("Recipient public key is invalid (low-order or non-canonical point, or zero shared secret).");
   // Ephemeral keypair stays non-extractable inside WebCrypto: the private
   // scalar is never exported, imported, or visible to page script.
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
@@ -599,6 +599,7 @@ async function fpOf(pubRaw){
  * for standard standalone browsers (Firefox, Chrome/Chromium, Edge, Safari),
  * or { kind: "webview" | "browser", label } when a risky runtime is spotted. */
 const WEBVIEW_RULES = [
+  [/\bwxwork\//i, "WeCom in-app WebView"],
   [/MicroMessenger\//i, "WeChat in-app WebView"],
   [/\bQQ\/[\d.]/i, "QQ in-app WebView"],
   [/DingTalk/i, "DingTalk in-app WebView"],
@@ -671,7 +672,7 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
     hex, pubEnc, pubDec, cat, isZero, TE, TD,
     CODECS, encodeEnv, decodeEnv, parseEnv,
-    INFO, VER, PBKDF2_ITER,
+    INFO, VER, PBKDF2_ITER, MAX_PBKDF2_ITER,
     PKCS8_X25519, X25519_BASE, LOW_ORDER_X25519, isLowOrderPub, isNonCanonicalPub, cleanContactName,
     EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,

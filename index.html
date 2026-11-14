@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'sha256-dIAqUKNPNU1iC50nm+v34E5nxy3lShmFE5wj0g38cSw='; style-src 'self' 'unsafe-inline'; img-src 'self' file:; font-src 'none'; manifest-src 'self' file:; worker-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'sha256-gRhQE2HfGAsTxTAbCsAaO40SSAHIl05HjPQ53zRWQiw='; style-src 'self' 'unsafe-inline'; img-src 'self' file:; font-src 'none'; manifest-src 'self' file:; worker-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
@@ -780,6 +780,7 @@ let CONTACTS = [];    // [{name, pub}]
 let LAST_PUB = null;  // hex string or null
 let WIPE_ARMED = false, WIPE_TIMER = 0;
 let DEL_ARMED = false, DEL_TIMER = 0;
+let BOOT_OK = false;
 
 function disarmDelContact(){
   clearTimeout(DEL_TIMER);
@@ -792,6 +793,7 @@ function disarmDelContact(){
 }
 
 function saveRecord(){
+  if (!RECORD) return;
   try { localStorage.setItem(LS_KEY, JSON.stringify(RECORD)); }
   catch {
     throw new Error("Could not persist the key to browser storage (blocked or full). "
@@ -820,9 +822,17 @@ function loadState(){
   }
   CONTACTS = [...byPub.values()];
   if (RECORD && typeof RECORD.pub === "string"){
-    try { parseRecord(RECORD); OWN_PUB = pubDec(RECORD.pub); }
-    catch { RECORD = null; OWN_PUB = null; }
-    if (!OWN_PUB || OWN_PUB.length !== 32 || isLowOrderPub(OWN_PUB) || isNonCanonicalPub(OWN_PUB)){ RECORD = null; OWN_PUB = null; }
+    try {
+      const { salt, iv, ct, iter } = parseRecord(RECORD);
+      const pubBytes = pubDec(RECORD.pub);
+      if (isLowOrderPub(pubBytes) || isNonCanonicalPub(pubBytes)) throw new Error("invalid-pub");
+      OWN_PUB = pubBytes;
+      RECORD = {
+        v: 1, type: "x25519-private", pub: pubEnc(pubBytes),
+        kdf: RECORD.kdf, iter, cipher: RECORD.cipher,
+        salt: b64enc(salt), iv: b64enc(iv), ct: b64enc(ct),
+      };
+    } catch { RECORD = null; OWN_PUB = null; }
   } else if (RECORD){ RECORD = null; }
 }
 
@@ -958,6 +968,8 @@ $("#btn-generate").addEventListener("click", async (e) => {
     const kp = await genKeyPair();
     priv = kp.priv;
     const w = await wrapScalar(p1, priv, PBKDF2_ITER);
+    if (RECORD !== null)
+      throw new Error("A key was already added in another tab — wipe it first before replacing.");
     RECORD = {
       v: 1, type: "x25519-private",
       pub: pubEnc(kp.pub),
@@ -968,10 +980,12 @@ $("#btn-generate").addEventListener("click", async (e) => {
     OWN_PUB = kp.pub;
     $("#gen-pass").value = $("#gen-pass2").value = "";
     $("#gen-warn").hidden = true;
+    let saveErr = null;
+    try { saveRecord(); }
+    catch (se){ saveErr = se; }
     await renderSetup();
     renderDecryptPre();
-    try { saveRecord(); }
-    catch (se){ showErr($("#save-warn"), se.message); }
+    if (saveErr) showErr($("#save-warn"), saveErr.message);
     ok = true;
   } catch (ex){ showErr(err, ex.message || "Generation failed."); }
   finally {
@@ -1017,13 +1031,17 @@ $("#btn-import").addEventListener("click", async (e) => {
         salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
       };
     }
+    if (RECORD !== null)
+      throw new Error("A key was already added in another tab — wipe it first before replacing.");
     RECORD = nextRec;
     OWN_PUB = pubDec(RECORD.pub);
     $("#imp-json").value = ""; $("#imp-pass").value = ""; $("#imp-file").value = "";
+    let saveErr = null;
+    try { saveRecord(); }
+    catch (se){ saveErr = se; }
     await renderSetup();
     renderDecryptPre();
-    try { saveRecord(); }
-    catch (se){ showErr($("#save-warn"), se.message); }
+    if (saveErr) showErr($("#save-warn"), saveErr.message);
     ok = true;
   } catch (ex){ showErr(err, ex.message || "Restore failed."); }
   finally {
@@ -1345,22 +1363,25 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   if (!c) return showErr(err, "Pick a contact first.");
   const msgText = $("#msg").value;
   if (!msgText) return showErr(err, "Enter a message to encrypt.");
-  if (msgText.length > MAX_IMPORT_BYTES) return showErr(err, "Message is too large.");
+  if (msgText.length > MAX_IMPORT_BYTES) return showErr(err, "Message is too large (max 1 MiB UTF-8).");
   const codecTag = $("#codec-sel").value;
   let pub;
   try {
     pub = pubDec(c.pub);
     if (isLowOrderPub(pub) || isNonCanonicalPub(pub)) throw new Error("invalid-pub");
   } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
+  const ptBytes = TE.encode(msgText);
+  if (ptBytes.length > MAX_IMPORT_BYTES){
+    ptBytes.fill(0);
+    return showErr(err, "Message is too large (max 1 MiB UTF-8).");
+  }
   $("#env-out").value = "";
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
   $("#btn-clear-msg").hidden = true;
   clearFlash(btn);
   btn.disabled = true; btn.textContent = "Encrypting…";
-  let ptBytes = null;
   try {
-    ptBytes = TE.encode(msgText);
     const env = encodeEnv(await encryptTo(pub, ptBytes), codecTag);
     if ($("#msg").value !== msgText || CONTACTS[Number.parseInt($("#contact-sel").value, 10)] !== c) return;
     $("#env-out").value = env;
@@ -1403,7 +1424,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   const env = $("#env-in").value;
   const pass = $("#dec-pass").value;
   if (!env.trim()) return showErr(err, "Paste an envelope first.");
-  if (env.length > MAX_IMPORT_BYTES * 2) return showErr(err, "Envelope is too large.");
+  if (env.length > MAX_IMPORT_BYTES * 4) return showErr(err, "Envelope is too large.");
   if (!pass) return showErr(err, "Enter the passphrase.");
   clearFlash(btn);
   btn.disabled = true; btn.textContent = "Decrypting…";
@@ -1443,6 +1464,7 @@ window.addEventListener("pagehide", () => {
 });
 
 window.addEventListener("storage", async (e) => {
+  if (!BOOT_OK) return;
   if (e.key === LS_THEME){
     applyTheme(e.newValue === "dark" || e.newValue === "light" ? e.newValue : null);
     return;
@@ -1532,6 +1554,7 @@ for (const b of $$("#tabs .tabbtn"))
     return;
   }
   loadState();
+  BOOT_OK = true;
 
   renderDecryptPre();
   if (RECORD) await renderSetup();
@@ -1543,7 +1566,7 @@ for (const b of $$("#tabs .tabbtn"))
   // a hung/slow registration must not stall the UI.
   if ("serviceWorker" in navigator && !location.protocol.startsWith("file")){
     try {
-      navigator.serviceWorker.register("sw.js")
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
         .then(() => console.info("[ecdh.html] offline cache ready"))
         .catch((err) => console.warn("[ecdh.html] offline cache unavailable:", err && err.message));
     } catch { /* a plain text note: page still works fully online */ }
