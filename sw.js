@@ -1,12 +1,13 @@
 // ecdh.html service worker — cache-first app shell.
 // Bump CACHE version whenever any file below (or index.html) changes.
-const CACHE = "ecdh-html-v1-20261114220000";
+const CACHE_PREFIX = "ecdh-html-";
+const CACHE = CACHE_PREFIX + "v1-20261115000000";
 const ASSETS = ["./", "./index.html", "./crypto.js", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches.open(CACHE)
-      .then((c) => c.addAll(ASSETS))
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: "reload" }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -14,7 +15,9 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(
+        keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k))
+      ))
       .then(() => self.clients.claim())
   );
 });
@@ -27,7 +30,7 @@ self.addEventListener("fetch", (e) => {
   } catch { return; }
 
   e.respondWith(
-    caches.match(req).then((hit) => {
+    caches.match(req, { ignoreSearch: req.mode === "navigate" }).then((hit) => {
       if (hit) return hit;
       return fetch(req).then((res) => {
         if (res && res.ok && res.type === "basic") {
@@ -35,7 +38,7 @@ self.addEventListener("fetch", (e) => {
           caches.open(CACHE).then((c) => c.put(req, copy));
         }
         return res;
-      }).catch(() => caches.match("./index.html"));
+      }).catch(() => (req.mode === "navigate" ? caches.match("./index.html") : Response.error()));
     })
   );
 });

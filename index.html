@@ -391,10 +391,10 @@
 </div>
 
 <nav id="tabs" role="tablist">
-  <button class="tabbtn" data-tab="setup" role="tab">Setup</button>
-  <button class="tabbtn" data-tab="encrypt" role="tab">Encrypt</button>
-  <button class="tabbtn" data-tab="decrypt" role="tab">Decrypt</button>
-  <button class="tabbtn" data-tab="help" role="tab">Help</button>
+  <button class="tabbtn" data-tab="setup" role="tab" type="button" aria-selected="true">Setup</button>
+  <button class="tabbtn" data-tab="encrypt" role="tab" type="button" aria-selected="false">Encrypt</button>
+  <button class="tabbtn" data-tab="decrypt" role="tab" type="button" aria-selected="false">Decrypt</button>
+  <button class="tabbtn" data-tab="help" role="tab" type="button" aria-selected="false">Help</button>
 </nav>
 
 <main>
@@ -465,6 +465,7 @@
       <div class="card-body">
         <button id="btn-export" class="primary" type="button">Download backup (.json)</button>
         <button id="btn-copy-backup" type="button">Copy backup JSON</button>
+        <div id="save-warn" class="warn" hidden></div>
         <details>
           <summary>Change passphrase</summary>
           <label for="ch-old">Current passphrase</label>
@@ -500,6 +501,7 @@
       <div class="contact-actions">
         <button id="btn-del-contact" class="danger" type="button">Remove selected contact</button>
       </div>
+      <div id="contacts-warn" class="warn" hidden></div>
       <div id="sel-fp" hidden>
         <label>Fingerprint of selected contact</label>
         <div class="fp-readout">
@@ -687,13 +689,17 @@ function esc(s){
 const FLASH_TIMERS = new WeakMap();
 function flash(btn, txt){
   if (!btn) return;
-  clearTimeout(FLASH_TIMERS.get(btn));
-  const old = btn.textContent;
+  const prev = FLASH_TIMERS.get(btn);
+  if (prev) clearTimeout(prev.id);
+  const old = prev ? prev.old : btn.textContent;
   btn.textContent = txt;
-  FLASH_TIMERS.set(btn, setTimeout(() => {
-    FLASH_TIMERS.delete(btn);
-    btn.textContent = old;
-  }, 1600));
+  FLASH_TIMERS.set(btn, {
+    old,
+    id: setTimeout(() => {
+      FLASH_TIMERS.delete(btn);
+      btn.textContent = old;
+    }, 1600),
+  });
 }
 async function copyText(t, btn){
   let ok = false;
@@ -754,6 +760,7 @@ $("#btn-theme").addEventListener("click", () => {
 let RECORD = null;    // wrapper record (object) or null
 let OWN_PUB = null;   // Uint8Array(32)
 let CONTACTS = [];    // [{name, pub}]
+let LAST_PUB = null;  // hex string or null
 let WIPE_ARMED = false, WIPE_TIMER = 0;
 
 function saveRecord(){
@@ -772,6 +779,7 @@ function saveContacts(){
 function loadState(){
   try { RECORD = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { RECORD = null; }
   try { CONTACTS = JSON.parse(localStorage.getItem(LS_CONTACTS) || "[]"); } catch { CONTACTS = []; }
+  try { LAST_PUB = localStorage.getItem(LS_LAST); } catch { LAST_PUB = null; }
   if (!Array.isArray(CONTACTS)) CONTACTS = [];
   CONTACTS = CONTACTS.filter(c => c && typeof c.name === "string" && typeof c.pub === "string");
   if (RECORD && typeof RECORD.pub === "string"){
@@ -820,9 +828,11 @@ async function renderContacts(){
   $("#btn-export-contacts").disabled = !has;
   $("#btn-copy-contacts").disabled = !has;
   if (has){
-    const lastPub = localStorage.getItem(LS_LAST);
+    let lastPub = LAST_PUB;
+    try { lastPub = localStorage.getItem(LS_LAST) || LAST_PUB; } catch { /* non-fatal */ }
     let idx = CONTACTS.findIndex(c => c.pub === lastPub);
     if (idx < 0) idx = 0;
+    LAST_PUB = CONTACTS[idx].pub;
     sel.innerHTML = CONTACTS.map((c, i) =>
       `<option value="${i}"${i === idx ? " selected" : ""}>${esc(c.name)}</option>`).join("");
     $("#btn-del-contact").disabled = false;
@@ -848,6 +858,25 @@ async function showSelFp(){
   } catch { $("#sel-fp").hidden = true; }
 }
 
+function clearStaleEnv(){
+  $("#env-out").value = "";
+  $("#env-out").hidden = true;
+  $("#btn-copy-env").hidden = true;
+  $("#btn-clear-msg").hidden = $("#msg").value === "";
+}
+function clearMsg(){
+  $("#msg").value = "";
+  clearStaleEnv();
+  hideErr($("#enc-err"));
+}
+function clearPlain(){
+  $("#plain-out").value = "";
+  $("#plain-out").hidden = true;
+  $("#btn-copy-plain").hidden = true;
+  $("#btn-clear-plain").hidden = true;
+  $("#dec-pass").value = "";
+}
+
 /* ---------- setup handlers ---------- */
 $("#gen-pass").addEventListener("input", (e) => {
   const v = e.target.value;
@@ -855,35 +884,42 @@ $("#gen-pass").addEventListener("input", (e) => {
 });
 
 $("#btn-generate").addEventListener("click", async (e) => {
-  const err = $("#gen-err"); hideErr(err);
+  const err = $("#gen-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.target;
   const p1 = $("#gen-pass").value, p2 = $("#gen-pass2").value;
   if (!p1) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
   if (p1 !== p2) return showErr(err, "Passphrases don't match.");
   btn.disabled = true; btn.textContent = "Generating…";
-  let ok = false;
+  let ok = false, priv = null;
   try {
-    const { priv, pub } = await genKeyPair();
+    const kp = await genKeyPair();
+    priv = kp.priv;
     const w = await wrapScalar(p1, priv, PBKDF2_ITER);
     RECORD = {
       v: 1, type: "x25519-private",
-      pub: pubEnc(pub),
+      pub: pubEnc(kp.pub),
       kdf: "PBKDF2-HMAC-SHA256", iter: PBKDF2_ITER,
       salt: b64enc(w.salt), cipher: "AES-256-GCM",
       iv: b64enc(w.iv), ct: b64enc(w.ct),
     };
-    OWN_PUB = pub;
-    saveRecord();
+    OWN_PUB = kp.pub;
     $("#gen-pass").value = $("#gen-pass2").value = "";
+    $("#gen-warn").hidden = true;
     await renderSetup();
+    renderDecryptPre();
+    try { saveRecord(); }
+    catch (se){ showErr($("#save-warn"), se.message); }
     ok = true;
   } catch (ex){ showErr(err, ex.message || "Generation failed."); }
-  finally { btn.disabled = false; btn.textContent = "Generate keypair"; }
+  finally {
+    if (priv) priv.fill(0);
+    btn.disabled = false; btn.textContent = "Generate keypair";
+  }
   if (ok) flash(btn, "Generated ✓");
 });
 
 $("#btn-import").addEventListener("click", async (e) => {
-  const err = $("#imp-err"); hideErr(err);
+  const err = $("#imp-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.target;
   let rec;
   try { rec = JSON.parse($("#imp-json").value); }
@@ -893,17 +929,22 @@ $("#btn-import").addEventListener("click", async (e) => {
   const pass = $("#imp-pass").value;
   if (!pass) return showErr(err, "Enter the passphrase for this record.");
   btn.disabled = true; btn.textContent = "Restoring…";
-  let ok = false;
+  let ok = false, scalar = null;
   try {
-    const scalar = await unwrapScalar(pass, rec);   // throws on wrong passphrase
-    RECORD = await recordFromImport(rec, scalar);   // throws on missing/mismatched pub
+    scalar = await unwrapScalar(pass, rec);          // throws on wrong passphrase
+    RECORD = await recordFromImport(rec, scalar);    // throws on missing/mismatched pub
     OWN_PUB = pubDec(RECORD.pub);
-    saveRecord();
-    $("#imp-json").value = ""; $("#imp-pass").value = "";
+    $("#imp-json").value = ""; $("#imp-pass").value = ""; $("#imp-file").value = "";
     await renderSetup();
+    renderDecryptPre();
+    try { saveRecord(); }
+    catch (se){ showErr($("#save-warn"), se.message); }
     ok = true;
   } catch (ex){ showErr(err, ex.message || "Restore failed."); }
-  finally { btn.disabled = false; btn.textContent = "Restore key"; }
+  finally {
+    if (scalar) scalar.fill(0);
+    btn.disabled = false; btn.textContent = "Restore key";
+  }
   if (ok) flash(btn, "Restored ✓");
 });
 
@@ -911,6 +952,7 @@ $("#imp-file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   if (!f) return;
   try { $("#imp-json").value = await f.text(); } catch { /* ignore */ }
+  finally { e.target.value = ""; }
 });
 
 $("#btn-copy-pub").addEventListener("click", (b) => copyText($("#pubout").value, b.target));
@@ -928,25 +970,32 @@ $("#btn-export").addEventListener("click", () => {
 $("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.target));
 
 $("#btn-chpass").addEventListener("click", async (e) => {
-  const err = $("#ch-err"); hideErr(err);
+  const err = $("#ch-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.target;
   const old = $("#ch-old").value, n1 = $("#ch-new").value, n2 = $("#ch-new2").value;
   if (!RECORD) return showErr(err, "No key stored.");
   if (!old) return showErr(err, "Enter the current passphrase.");
   if (!n1 || n1 !== n2) return showErr(err, "New passphrases are empty or don't match.");
   btn.disabled = true; btn.textContent = "Working…";
-  let ok = false;
+  let ok = false, scalar = null;
   try {
-    const scalar = await unwrapScalar(old, RECORD);
+    scalar = await unwrapScalar(old, RECORD);
     // Re-wrap at the current default so legacy records upgrade their KDF cost.
     const w = await wrapScalar(n1, scalar, PBKDF2_ITER);
-    RECORD.iter = PBKDF2_ITER;
-    RECORD.salt = b64enc(w.salt); RECORD.iv = b64enc(w.iv); RECORD.ct = b64enc(w.ct);
-    saveRecord();
+    RECORD = {
+      ...RECORD,
+      iter: PBKDF2_ITER,
+      salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
+    };
     $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
+    try { saveRecord(); }
+    catch (se){ showErr($("#save-warn"), se.message); }
     ok = true;
   } catch (ex){ showErr(err, ex.message || "Failed."); }
-  finally { btn.disabled = false; btn.textContent = "Change passphrase"; }
+  finally {
+    if (scalar) scalar.fill(0);
+    btn.disabled = false; btn.textContent = "Change passphrase";
+  }
   if (ok) flash(btn, "Changed ✓");
 });
 
@@ -982,18 +1031,33 @@ $("#btn-wipe").addEventListener("click", async (e) => {
   const wipeAll = $("#wipe-contacts").checked;
   $("#wipe-contacts").checked = false;
   b.textContent = wipeBtnLabel(false);
-  try {
-    localStorage.removeItem(LS_KEY);
-    RECORD = null; OWN_PUB = null;
-    if (wipeAll){
+  hideErr($("#wipe-err")); hideErr($("#save-warn"));
+  if (OWN_PUB) OWN_PUB.fill(0);
+  RECORD = null; OWN_PUB = null;
+  $("#pubout").value = "";
+  $("#fp-emoji").innerHTML = ""; $("#fp-hex").textContent = "";
+  $("#gen-pass").value = $("#gen-pass2").value = ""; $("#gen-warn").hidden = true; hideErr($("#gen-err"));
+  $("#imp-json").value = ""; $("#imp-file").value = ""; $("#imp-pass").value = ""; hideErr($("#imp-err"));
+  $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = ""; hideErr($("#ch-err"));
+  clearPlain(); $("#env-in").value = ""; hideErr($("#dec-err"));
+  clearMsg();
+  if (wipeAll){
+    CONTACTS = []; LAST_PUB = null;
+    clearTimeout(ctFpTimer);
+    $("#ct-name").value = ""; $("#ct-pub").value = "";
+    $("#ct-fp").hidden = true; $("#ct-wait").hidden = true;
+    hideErr($("#ct-err")); hideErr($("#contacts-warn"));
+    $("#imp-contacts-json").value = ""; $("#imp-contacts-file").value = "";
+    hideErr($("#imp-contacts-err"));
+    try {
       localStorage.removeItem(LS_CONTACTS);
       localStorage.removeItem(LS_LAST);
-      CONTACTS = [];
-      await renderContacts();
-    }
-    await renderSetup();
-    flash(b, "Wiped ✓");
-  } catch (ex){ showErr($("#wipe-err"), ex.message || "Wipe failed."); }
+    } catch { /* non-fatal */ }
+    await renderContacts();
+  }
+  try { localStorage.removeItem(LS_KEY); } catch { /* non-fatal */ }
+  await renderSetup();
+  renderDecryptPre();
 });
 
 /* ---------- contacts & encrypt handlers ---------- */
@@ -1016,7 +1080,7 @@ $("#ct-pub").addEventListener("input", () => {
 });
 
 $("#btn-add-contact").addEventListener("click", async (e) => {
-  const err = $("#ct-err"); hideErr(err);
+  const err = $("#ct-err"); hideErr(err); hideErr($("#contacts-warn"));
   const btn = e.target;
   const name = $("#ct-name").value.trim() || "friend";
   const pubStr = $("#ct-pub").value.trim();
@@ -1027,24 +1091,39 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
   if (CONTACTS.some(c => c.pub === pubHex))
     return showErr(err, "This public key is already saved.");
   CONTACTS.push({ name, pub: pubHex });
+  LAST_PUB = pubHex;
+  clearTimeout(ctFpTimer);
+  $("#ct-name").value = ""; $("#ct-pub").value = "";
+  $("#ct-fp").hidden = true; $("#ct-wait").hidden = true;
+  clearStaleEnv();
+  await renderContacts();
   try {
     saveContacts();
     localStorage.setItem(LS_LAST, pubHex);   // last-contact tracked by key, not name
-  } catch (ex){ return showErr(err, ex.message || "Could not save the contact."); }
-  $("#ct-name").value = ""; $("#ct-pub").value = "";
-  $("#ct-fp").hidden = true;
-  await renderContacts();
+  } catch (ex){ showErr($("#contacts-warn"), ex.message || "Could not persist contacts to browser storage."); }
   flash(btn, "Added ✓");
 });
 
-$("#contact-sel").addEventListener("change", showSelFp);
+$("#contact-sel").addEventListener("change", () => {
+  const c = CONTACTS[$("#contact-sel").value | 0];
+  if (c){
+    LAST_PUB = c.pub;
+    try { localStorage.setItem(LS_LAST, c.pub); } catch { /* non-fatal */ }
+  }
+  hideErr($("#enc-err"));
+  clearStaleEnv();
+  showSelFp();
+});
 
 $("#btn-del-contact").addEventListener("click", async () => {
   const sel = $("#contact-sel");
   if (!CONTACTS.length) return;
+  hideErr($("#contacts-warn"));
   CONTACTS.splice(sel.value | 0, 1);
-  saveContacts();
+  clearStaleEnv();
   await renderContacts();
+  try { saveContacts(); }
+  catch (ex){ showErr($("#contacts-warn"), ex.message || "Could not persist contacts to browser storage."); }
 });
 
 $("#btn-export-contacts").addEventListener("click", () => {
@@ -1063,10 +1142,11 @@ $("#imp-contacts-file").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   if (!f) return;
   try { $("#imp-contacts-json").value = await f.text(); } catch { /* ignore */ }
+  finally { e.target.value = ""; }
 });
 
 $("#btn-import-contacts").addEventListener("click", async (e) => {
-  const err = $("#imp-contacts-err"); hideErr(err);
+  const err = $("#imp-contacts-err"); hideErr(err); hideErr($("#contacts-warn"));
   const btn = e.target;
   let list;
   try { list = JSON.parse($("#imp-contacts-json").value); }
@@ -1076,11 +1156,15 @@ $("#btn-import-contacts").addEventListener("click", async (e) => {
     const byPub = new Map(CONTACTS.map(c => [c.pub, c]));
     for (const c of incoming) byPub.set(c.pub, c);
     CONTACTS = [...byPub.values()];
-    saveContacts();
-    localStorage.setItem(LS_LAST, incoming[incoming.length - 1].pub);
+    LAST_PUB = incoming[incoming.length - 1].pub;
     $("#imp-contacts-json").value = "";
     $("#imp-contacts-file").value = "";
+    clearStaleEnv();
     await renderContacts();
+    try {
+      saveContacts();
+      localStorage.setItem(LS_LAST, LAST_PUB);
+    } catch (se){ showErr($("#contacts-warn"), se.message || "Could not persist contacts to browser storage."); }
     flash(btn, "Imported ✓");
   } catch (ex){ showErr(err, ex.message || "Could not import contacts."); }
 });
@@ -1096,30 +1180,33 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   $("#btn-copy-env").hidden = true;
   $("#btn-clear-msg").hidden = true;
   btn.disabled = true; btn.textContent = "Encrypting…";
+  let ptBytes = null;
   try {
-    const env = encodeEnv(await encryptTo(pub, TE.encode($("#msg").value)),
-      $("#codec-sel").value);
+    ptBytes = TE.encode($("#msg").value);
+    const env = encodeEnv(await encryptTo(pub, ptBytes), $("#codec-sel").value);
     $("#env-out").value = env;
     $("#env-out").hidden = false;
     $("#btn-copy-env").hidden = false;
     $("#btn-clear-msg").hidden = false;
+    LAST_PUB = c.pub;
     try { localStorage.setItem(LS_LAST, c.pub); } catch { /* non-fatal */ }
   } catch (ex){ showErr(err, ex.message || "Encryption failed."); }
-  finally { btn.disabled = false; btn.textContent = "Encrypt"; }
+  finally {
+    if (ptBytes) ptBytes.fill(0);
+    btn.disabled = false; btn.textContent = "Encrypt";
+  }
 });
 
 $("#btn-copy-env").addEventListener("click", (b) => copyText($("#env-out").value, b.target));
+$("#codec-sel").addEventListener("change", () => {
+  hideErr($("#enc-err"));
+  clearStaleEnv();
+});
 $("#msg").addEventListener("input", () => {
   hideErr($("#enc-err"));
-  $("#btn-clear-msg").hidden = $("#msg").value === "" && $("#env-out").hidden;
+  clearStaleEnv();
 });
-$("#btn-clear-msg").addEventListener("click", () => {
-  $("#msg").value = "";
-  $("#env-out").value = ""; $("#env-out").hidden = true;
-  $("#btn-copy-env").hidden = true;
-  $("#btn-clear-msg").hidden = true;
-  hideErr($("#enc-err"));
-});
+$("#btn-clear-msg").addEventListener("click", clearMsg);
 
 /* ---------- decrypt handlers ---------- */
 ["env-in"].forEach(id => $("#" + id).addEventListener("input", () => hideErr($("#dec-err"))));
@@ -1136,26 +1223,26 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   $("#plain-out").hidden = true;
   $("#btn-copy-plain").hidden = true;
   $("#btn-clear-plain").hidden = true;
+  let scalar = null, ptBytes = null;
   try {
-    const scalar = await unwrapScalar(pass, RECORD);
-    const text = TD.decode(await decryptWith(scalar, OWN_PUB, env));
+    scalar = await unwrapScalar(pass, RECORD);
+    ptBytes = await decryptWith(scalar, OWN_PUB, env);
+    const text = TD.decode(ptBytes);
     $("#plain-out").value = text;
     $("#plain-out").hidden = false;
     $("#btn-copy-plain").hidden = false;
     $("#btn-clear-plain").hidden = false;
     $("#dec-pass").value = "";   // single-use: drop it as soon as it worked
   } catch (ex){ showErr(err, ex.message || "Decryption failed."); }
-  finally { btn.disabled = false; btn.textContent = "Decrypt"; }
+  finally {
+    if (scalar) scalar.fill(0);
+    if (ptBytes) ptBytes.fill(0);
+    btn.disabled = false; btn.textContent = "Decrypt";
+  }
 });
 
 $("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.target));
-$("#btn-clear-plain").addEventListener("click", () => {
-  $("#plain-out").value = "";
-  $("#plain-out").hidden = true;
-  $("#btn-copy-plain").hidden = true;
-  $("#btn-clear-plain").hidden = true;
-  $("#dec-pass").value = "";
-});
+$("#btn-clear-plain").addEventListener("click", clearPlain);
 
 /* ---------- boot ---------- */
 for (const b of $$("#tabs .tabbtn"))
@@ -1190,7 +1277,7 @@ for (const b of $$("#tabs .tabbtn"))
   }
   if (!(await x25519Supported())){
     bail("This browser is too old for ecdh.html.",
-      "Its Web Crypto has no X25519 support (Chrome/Edge 133+, Firefox 129+, or Safari 17+). Update the browser or use another device. Buttons are disabled.");
+      "Its Web Crypto has no X25519 support (Chrome/Edge 133+, Firefox 130+, or Safari 18.4+ / iOS 18.4+). Update the browser or use another device. Buttons are disabled.");
     return;
   }
   loadState();

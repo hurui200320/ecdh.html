@@ -1,4 +1,5 @@
 "use strict";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /* =====================================================================
  * ecdh.html v1 — DOM-free crypto core, shared by index.html (loaded as a
  * plain script before the UI code) and tests/crypto.test.js (required
@@ -33,10 +34,11 @@ function b64dec(str){
  * Alphabet is ZeroMQ's: digits + letters + punctuation, chosen to avoid
  * quotes and backslash, so it survives JSON/shell/markdown channels that
  * mangle Ascii85's `"` `'` `\` range. The Z85 spec only defines lengths
- * divisible by 4; envelope lengths aren't (45 bytes + plaintext), so tails
+ * divisible by 4; envelope lengths aren't (61 bytes + plaintext), so tails
  * follow the classic Ascii85 convention: encode zero-pads the final group
  * and emits r+1 chars for the last r bytes; decode pads a short final group
- * with the highest digit ('#') and keeps the k-1 bytes a k-char tail packs.
+ * with the highest digit ('#'), keeps the k-1 bytes a k-char tail packs, and
+ * verifies the tail re-encodes identically (rejecting non-zero padding bits).
  * Every 5-char group must decode to a value below 2^32 — legal tails never
  * overflow that, so a bigger value marks the input as non-canonical. */
 const Z85 = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
@@ -83,6 +85,8 @@ function z85dec(str){
     const keep = g < groups ? 4 : rem - 1;
     for (let b = 0; b < keep; b++) out[o++] = Math.floor(v / 2 ** (8 * (3 - b))) % 256;
   }
+  if (rem && z85enc(out.subarray(groups * 4)) !== str.slice(groups * 5))
+    throw new Error("Non-canonical Z85: tail padding bits are set.");
   return out;
 }
 /* ---------- base4096 (tag 賒) ---------- */
@@ -255,12 +259,13 @@ function cat(...arrs){
 }
 function isZero(u8){ for (const b of u8) if (b) return false; return true; }
 const TE = new TextEncoder();
-const TD = new TextDecoder();
+const TD = new TextDecoder("utf-8", { ignoreBOM: true });
 
 /* ---------- crypto core ---------- */
 const INFO = TE.encode("ecdh.html/v1");
 const VER = 1;
 const PBKDF2_ITER = 800000;
+const MAX_PBKDF2_ITER = 100000000;
 
 // DER wrappers so raw 32-byte X25519 keys go through WebCrypto untouched.
 const PKCS8_X25519 = new Uint8Array(
@@ -271,13 +276,18 @@ async function genKeyPair(){
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
   const pub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
   const pk8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey));
-  if (pk8.length !== 48) throw new Error("Unexpected private key encoding.");
-  return { priv: pk8.slice(16), pub };
+  try {
+    if (pk8.length !== 48) throw new Error("Unexpected private key encoding.");
+    return { priv: pk8.slice(16), pub };
+  } finally { pk8.fill(0); }
 }
 async function importPriv(rawScalar){
   if (rawScalar.length !== 32) throw new Error("Private scalar must be exactly 32 bytes.");
-  return crypto.subtle.importKey("pkcs8", cat(PKCS8_X25519, rawScalar),
-    { name: "X25519" }, false, ["deriveBits"]);
+  const der = cat(PKCS8_X25519, rawScalar);
+  try {
+    return await crypto.subtle.importKey("pkcs8", der,
+      { name: "X25519" }, false, ["deriveBits"]);
+  } finally { der.fill(0); }
 }
 async function importPub(raw){
   if (raw.length !== 32) throw new Error("Public key must be exactly 32 bytes.");
@@ -354,21 +364,26 @@ async function encryptTo(recipPubRaw, plaintext){
   // scalar is never exported, imported, or visible to page script.
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
   const ephPub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
-  let ss;
+  let ss, key;
   try {
-    ss = new Uint8Array(await crypto.subtle.deriveBits(
-      { name: "X25519", public: await importPub(recipPubRaw) }, kp.privateKey, 256));
-  } catch {
-    // Same small-order/invalid-point quirk as x25519() above.
-    throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
+    try {
+      ss = new Uint8Array(await crypto.subtle.deriveBits(
+        { name: "X25519", public: await importPub(recipPubRaw) }, kp.privateKey, 256));
+    } catch {
+      // Same small-order/invalid-point quirk as x25519() above.
+      throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
+    }
+    if (isZero(ss)) throw new Error("Recipient public key is invalid (zero shared secret).");
+    key = await hkdf32(ss, cat(ephPub, recipPubRaw));
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["encrypt"]);
+    const ct = new Uint8Array(await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, tagLength: 128 }, aes, plaintext));
+    return cat(new Uint8Array([VER]), ephPub, iv, ct);
+  } finally {
+    if (ss) ss.fill(0);
+    if (key) key.fill(0);
   }
-  if (isZero(ss)) throw new Error("Recipient public key is invalid (zero shared secret).");
-  const key = await hkdf32(ss, cat(ephPub, recipPubRaw));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["encrypt"]);
-  const ct = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv, tagLength: 128 }, aes, plaintext));
-  return cat(new Uint8Array([VER]), ephPub, iv, ct);
 }
 async function decryptWith(privScalar, ownPubRaw, envStr){
   const u = decodeEnv(envStr);
@@ -377,25 +392,34 @@ async function decryptWith(privScalar, ownPubRaw, envStr){
   const ephPub = u.slice(1, 33);
   const iv = u.slice(33, 45);
   const ct = u.slice(45);
-  const ss = await x25519(privScalar, ephPub);
-  if (isZero(ss)) throw new Error("Envelope's sender key is invalid (zero shared secret).");
-  const key = await hkdf32(ss, cat(ephPub, ownPubRaw));
-  let pt;
+  let ss, key;
   try {
-    const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["decrypt"]);
-    pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv, tagLength: 128 }, aes, ct);
-  } catch {
-    throw new Error("Decryption failed — wrong key, or envelope was tampered with.");
+    ss = await x25519(privScalar, ephPub);
+    if (isZero(ss)) throw new Error("Envelope's sender key is invalid (zero shared secret).");
+    key = await hkdf32(ss, cat(ephPub, ownPubRaw));
+    let pt;
+    try {
+      const aes = await crypto.subtle.importKey("raw", key, { name: "AES-GCM" }, false, ["decrypt"]);
+      pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv, tagLength: 128 }, aes, ct);
+    } catch {
+      throw new Error("Decryption failed — wrong key, or envelope was tampered with.");
+    }
+    return new Uint8Array(pt);   // raw bytes; the caller decodes the text
+  } finally {
+    if (ss) ss.fill(0);
+    if (key) key.fill(0);
   }
-  return new Uint8Array(pt);   // raw bytes; the caller decodes the text
 }
 
 /* ---------- passphrase wrapper (storage + export use the same record) ---------- */
 async function aesKeyFromPass(pass, salt, iter, usages){
-  const base = await crypto.subtle.importKey("raw", TE.encode(pass), { name: "PBKDF2" }, false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base,
-    { name: "AES-GCM", length: 256 }, false, usages);
+  const raw = TE.encode(pass);
+  try {
+    const base = await crypto.subtle.importKey("raw", raw, { name: "PBKDF2" }, false, ["deriveKey"]);
+    return await crypto.subtle.deriveKey(
+      { name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, base,
+      { name: "AES-GCM", length: 256 }, false, usages);
+  } finally { raw.fill(0); }
 }
 async function wrapScalar(pass, scalar, iter){
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -405,15 +429,18 @@ async function wrapScalar(pass, scalar, iter){
   return { salt, iv, ct };
 }
 async function unwrapScalar(pass, rec){
-  if (rec.v !== 1 || rec.type !== "x25519-private") throw new Error("Not an ecdh.html v1 key record.");
+  if (!rec || typeof rec !== "object" || rec.v !== 1 || rec.type !== "x25519-private")
+    throw new Error("Not an ecdh.html v1 key record.");
   if (rec.kdf !== "PBKDF2-HMAC-SHA256" || rec.cipher !== "AES-256-GCM")
     throw new Error("Record uses an unsupported KDF/cipher.");
-  let salt, iv, ct, iter;
+  let salt, iv, ct;
   try {
+    if (typeof rec.salt !== "string" || typeof rec.iv !== "string" || typeof rec.ct !== "string")
+      throw new Error("bad base64 fields");
     salt = b64dec(rec.salt); iv = b64dec(rec.iv); ct = b64dec(rec.ct);
-    iter = rec.iter | 0;
   } catch { throw new Error("Record is corrupted (bad base64 fields)."); }
-  if (salt.length !== 16 || iv.length !== 12 || ct.length !== 48 || !(iter > 0))
+  const iter = typeof rec.iter === "number" && Number.isFinite(rec.iter) ? Math.trunc(rec.iter) : 0;
+  if (salt.length !== 16 || iv.length !== 12 || ct.length !== 48 || iter < 1 || iter > MAX_PBKDF2_ITER)
     throw new Error("Record is corrupted (bad field sizes).");
   let pt;
   try {
@@ -430,13 +457,15 @@ async function unwrapScalar(pass, rec){
 async function recordFromImport(rec, scalar){
   if (!rec || typeof rec !== "object") throw new Error("Not an ecdh.html v1 key record.");
   if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
+  const iter = typeof rec.iter === "number" && Number.isFinite(rec.iter) ? Math.trunc(rec.iter) : 0;
+  if (iter < 1 || iter > MAX_PBKDF2_ITER) throw new Error("Record is corrupted (bad field sizes).");
   const recPub = pubDec(rec.pub);   // hex; throws on anything else
   const derivedPub = await pubFromPriv(scalar);
   if (hex(recPub) !== hex(derivedPub))
     throw new Error("Record is internally inconsistent (pub does not match private key).");
   return {
     v: 1, type: "x25519-private", pub: pubEnc(derivedPub),
-    kdf: rec.kdf, iter: rec.iter | 0, cipher: rec.cipher,
+    kdf: rec.kdf, iter, cipher: rec.cipher,
     salt: rec.salt, iv: rec.iv, ct: rec.ct,
   };
 }

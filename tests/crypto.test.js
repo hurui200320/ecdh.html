@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * Crypto-core cross-check for ecdh.html — no browser required.
- * Needs Node >= 18.4 (global WebCrypto with X25519).
+ * Needs Node >= 20 (global WebCrypto with X25519).
  *
  * Requires crypto.js — the DOM-free crypto core loaded by index.html —
  * and verifies it against Node's independent OpenSSL implementation — the
@@ -81,6 +81,9 @@ async function makeRecord(priv, pub, pass, iter){
   assert.strictEqual(
     TD.decode(await decryptWith(priv, pub, encodeEnv(await encryptTo(pub, new Uint8Array(0))))),
     "", "empty plaintext");
+  assert.strictEqual(
+    TD.decode(await decryptWith(priv, pub, encodeEnv(await encryptTo(pub, TE.encode("\uFEFFhello"))))),
+    "\uFEFFhello", "leading UTF-8 BOM is preserved");
 
   /* 2b. envelope text layer: TAG || codec(envelope bytes) */
   const envStr = encodeEnv(env);
@@ -108,6 +111,9 @@ async function makeRecord(priv, pub, pass, iter){
   assert.strictEqual(z85enc(new Uint8Array([1])), "0r", "1-byte tail");
   assert.strictEqual(z85enc(new Uint8Array([1, 2])), "0rJ", "2-byte tail");
   assert.strictEqual(z85enc(new Uint8Array([1, 2, 3])), "0rJu", "3-byte tail");
+  assert.throws(() => z85dec("0s"), /canonical/i, "1-byte Z85 tail with padding bits set is rejected");
+  assert.throws(() => z85dec("0rK"), /canonical/i, "2-byte Z85 tail with padding bits set is rejected");
+  assert.throws(() => z85dec("0rJv"), /canonical/i, "3-byte Z85 tail with padding bits set is rejected");
   assert.throws(() => z85dec("~~"), /alphabet/i, "chars outside the alphabet are rejected");
   // Cross-check against an independent BigInt implementation, every tail
   // shape plus random bulk data, and round-trip each.
@@ -214,12 +220,16 @@ async function makeRecord(priv, pub, pass, iter){
     "plaintext must be raw bytes, not a string");
   await assert.rejects(encryptTo(new Uint8Array(32), new Uint8Array(4)), /invalid|zero|agreement/i,
     "all-zero recipient key must be rejected");
+  const zeroEphEnv = new Uint8Array(1 + 32 + 12 + 16);
+  zeroEphEnv[0] = VER;
+  await assert.rejects(decryptWith(priv, pub, encodeEnv(zeroEphEnv)), /invalid|zero|agreement/i,
+    "all-zero ephemeral sender key must be rejected");
   const tam = u.slice(); tam[47] ^= 0xff;
   await assert.rejects(decryptWith(priv, pub, encodeEnv(tam)), /Decryption failed/i);
   const wv = u.slice(); wv[0] = 2;
   await assert.rejects(decryptWith(priv, pub, encodeEnv(wv)), /version/i);
   await assert.rejects(decryptWith(priv, pub, encodeEnv(u.slice(0, 40))), /truncated/i);
-  await assert.rejects(decryptWith(priv, pub, "AQID"), /truncated/i,
+  await assert.rejects(decryptWith(priv, pub, "AQID"), /truncated|not valid Z85/i,
     "tagless old-style string parses as tag 'A' + short payload, then fails cleanly");
   const other = await genKeyPair();
   await assert.rejects(decryptWith(other.priv, other.pub, encodeEnv(env)), /Decryption failed/i,
@@ -257,10 +267,16 @@ async function makeRecord(priv, pub, pass, iter){
   const rec = await makeRecord(priv, pub, "correct horse battery staple", 1500);
   assert.ok(Buffer.from(await unwrapScalar("correct horse battery staple", rec)).equals(Buffer.from(priv)));
   await assert.rejects(unwrapScalar("wrong pass", rec), /Wrong passphrase/i);
+  await assert.rejects(unwrapScalar("x", null), /Not an ecdh/i);
+  await assert.rejects(unwrapScalar("x", "not-an-object"), /Not an ecdh/i);
   await assert.rejects(unwrapScalar("x", { ...rec, v: 2 }), /Not an ecdh/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: b64enc(new Uint8Array(8)) }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, ct: b64enc(new Uint8Array(30)) }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 0 }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, iter: -100 }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, iter: true }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, iter: 4294967297 }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, salt: 123 }), /bad base64/i);
   await assert.rejects(unwrapScalar("x", { ...rec, kdf: "PBKDF2-HMAC-SHA512" }), /unsupported KDF/i);
   assert.strictEqual(PBKDF2_ITER, 800000, "production iteration count is pinned");
   const big = await makeRecord(priv, pub, "another pass", PBKDF2_ITER);

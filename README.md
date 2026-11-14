@@ -99,7 +99,7 @@ Friends agree out of band to exchange encrypted text over whatever untrusted cha
 
 - **HTTPS or `localhost` is required when serving over a network.** Browsers only expose Web Crypto (`crypto.subtle`) in secure contexts. Opening the site over plain `http://` on a LAN IP will disable Web Crypto (the page will display a banner explaining why). Put it behind a TLS reverse proxy or open it on `localhost`.
 - **Local `file://` copies work offline.** Browsers treat `file://` as a secure context, so downloading raw `index.html` and `crypto.js` from [this GitHub repository](https://github.com/hurui200320/ecdh.html) into the same folder on a USB drive or local disk gives you a fully functional offline copy without any web server. (Do **not** use the browser's *Save Page As* menu while using the app — see *Initial setup* below.)
-- **Browser requirements:** Use a standard standalone browser with X25519 support in Web Crypto (**Chrome/Edge 133+, Firefox 129+, or Safari 17+**). On startup, the page checks for Web Crypto/X25519 support and also inspects the runtime environment—displaying a warning banner if opened inside an in-app WebView (such as WeChat, QQ, DingTalk, Weibo, or generic Android/iOS WebViews) or a non-standard/cloud browser.
+- **Browser requirements:** Use a standard standalone browser with X25519 support in Web Crypto (**Chrome/Edge 133+, Firefox 130+, or Safari 18.4+ / iOS 18.4+**). On startup, the page checks for Web Crypto/X25519 support and also inspects the runtime environment—displaying a warning banner if opened inside an in-app WebView (such as WeChat, QQ, DingTalk, Weibo, or generic Android/iOS WebViews) or a non-standard/cloud browser.
 - **Updating a hosted deployment:** If you edit any file, increment the `CACHE` version string in `sw.js` so returning browsers pick up the new assets. After deploying over HTTPS, load the page once, switch to offline mode, and reload to confirm the service worker serves the cached app shell.
 - **iOS Safari caveat:** Safari may clear PWA storage after roughly a week of inactivity — always export and keep a copy of your backup JSON.
 
@@ -110,7 +110,7 @@ python3 -m http.server 8000
 # Open http://localhost:8000 in your browser
 ```
 
-To run the automated cryptographic test suite (requires Node.js >= 18.4):
+To run the automated cryptographic test suite (requires Node.js >= 20):
 
 ```bash
 node tests/crypto.test.js
@@ -249,10 +249,10 @@ Tag `A` encodes the binary envelope using **Z85** (ZeroMQ's base85 variant: 4 by
 Digits are ordered 0–84 as listed above; the `Z85` constant in `crypto.js` is normative.
 
 - **Full groups:** Each 4-byte group is read **big-endian** as an unsigned 32-bit integer and written as 5 base-85 digits, **most significant digit first** (`d4 = floor(value / 85⁴)`). Unlike Ascii85, there is no `z` shorthand for all-zero groups.
-- **Tails:** Because envelope lengths (`45 + plaintext length`) are not always multiples of 4, tail handling is defined explicitly:
+- **Tails:** Because envelope lengths (`61 + plaintext length`, or `45 + ciphertext length`) are not always multiples of 4, tail handling is defined explicitly:
   - **Encoding:** The final `r` bytes (`r` = 1..3) are zero-padded on the right to 4 bytes, encoded as 5 digits, and only the first `r + 1` characters are emitted.
   - **Decoding:** A trailing `k`-character group (`k` = 2..4) is padded to 5 characters using the highest digit `#` (value 84), decoded into 4 bytes, and the first `k − 1` bytes are kept. A 1-character tail is never valid.
-- **Strict validation:** Decoders reject any character outside the alphabet, any length leaving a 1-character tail, and any 5-character group whose decoded value exceeds `2³² − 1` (valid tails padded with `#` never overflow `2³² − 1`).
+- **Strict validation:** Decoders reject any character outside the alphabet, any length leaving a 1-character tail, any 5-character group whose decoded value exceeds `2³² − 1` (valid tails padded with `#` never overflow `2³² − 1`), and any non-canonical tail whose re-encoded `k − 1` bytes do not match the `k` tail characters (i.e., non-zero padding bits).
 
 Test vectors:
 - `86 4F D2 6F B5 59 F7 5B` → `HelloWorld`
@@ -327,6 +327,12 @@ If you want to build a compatible desktop or Android tool using BouncyCastle / J
 - **Browser quirks handled in code:**
   1. *Non-blocking service worker registration:* Startup does not `await` `navigator.serviceWorker.register()`, preventing a slow or stuck service worker registration from delaying UI initialization.
   2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are caught and normalized into explicit `"zero shared secret"` error messages.
+
+---
+
+## License
+
+Licensed under the [GNU Affero General Public License v3.0 (or later)](LICENSE) (`AGPL-3.0-or-later`).
 
 ---
 
