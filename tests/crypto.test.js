@@ -29,6 +29,7 @@ const nc = require("node:crypto");
 const core = require("../crypto.js");
 
 const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
+        LOW_ORDER_X25519, isLowOrderPub, cleanContactName,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv, parseEnv,
         genKeyPair, importPriv, importPub, x25519, pubFromPriv, x25519Supported, encryptTo, decryptWith,
@@ -237,21 +238,32 @@ async function makeRecord(priv, pub, pass, iter){
     assert.strictEqual(out.toString("utf8"), msg, "OpenSSL cross-decrypt must match");
   }
 
-  /* 4. failure paths */
-  await assert.rejects(x25519(priv, new Uint8Array(32)), /invalid|zero|agreement/i,
-    "x25519 rejects all-zero public key directly");
+  /* 4. failure paths (incl. all 8 RFC 7748 / Wycheproof low-order & non-canonical X25519 points) */
+  const lowOrderHexVectors = [
+    ...LOW_ORDER_X25519,
+    "0000000000000000000000000000000000000000000000000000000000000080", // 0 with top bit 255 set
+  ];
+  assert.strictEqual(lowOrderHexVectors.length, 8, "8 RFC 7748 / Wycheproof low-order vectors");
+  assert.strictEqual(isLowOrderPub(pub), false, "generated public key is not low-order");
+  for (const hVec of lowOrderHexVectors){
+    const badPub = pubDec(hVec);
+    assert.strictEqual(isLowOrderPub(badPub), true, "isLowOrderPub flags " + hVec.slice(0, 8));
+    await assert.rejects(x25519(priv, badPub), /invalid|zero|agreement/i,
+      "x25519 rejects low-order point " + hVec.slice(0, 8));
+    await assert.rejects(encryptTo(badPub, new Uint8Array(4)), /invalid|zero|agreement/i,
+      "encryptTo rejects low-order recipient key " + hVec.slice(0, 8));
+    const badEnv = new Uint8Array(1 + 32 + 12 + 16);
+    badEnv[0] = VER;
+    badEnv.set(badPub, 1);
+    await assert.rejects(decryptWith(priv, pub, encodeEnv(badEnv)), /invalid|zero|agreement/i,
+      "decryptWith rejects low-order ephemeral sender key " + hVec.slice(0, 8));
+  }
   await assert.rejects(encryptTo(new Uint8Array(32), "x"), /raw bytes|Uint8Array/i,
     "plaintext must be raw bytes, not a string");
-  await assert.rejects(encryptTo(new Uint8Array(32), new Uint8Array(4)), /invalid|zero|agreement/i,
-    "all-zero recipient key must be rejected");
   await assert.rejects(decryptWith(priv, pubEnc(pub), encodeEnv(env)), /32 bytes/i,
     "decryptWith rejects string ownPubRaw");
   await assert.rejects(decryptWith(priv, new Uint8Array(16), encodeEnv(env)), /32 bytes/i,
     "decryptWith rejects short ownPubRaw");
-  const zeroEphEnv = new Uint8Array(1 + 32 + 12 + 16);
-  zeroEphEnv[0] = VER;
-  await assert.rejects(decryptWith(priv, pub, encodeEnv(zeroEphEnv)), /invalid|zero|agreement/i,
-    "all-zero ephemeral sender key must be rejected");
   const tam = u.slice(); tam[47] ^= 0xff;
   await assert.rejects(decryptWith(priv, pub, encodeEnv(tam)), /Decryption failed/i);
   const wv = u.slice(); wv[0] = 2;
@@ -262,6 +274,8 @@ async function makeRecord(priv, pub, pass, iter){
   const other = await genKeyPair();
   await assert.rejects(decryptWith(other.priv, other.pub, encodeEnv(env)), /Decryption failed/i,
     "wrong recipient key must fail");
+  await assert.rejects(decryptWith(priv, other.pub, encodeEnv(env)), /does not match/i,
+    "decryptWith rejects mismatched ownPubRaw vs privScalar");
 
   /* 5. fingerprint = sha256 -> 72 bits -> 12 emoji + English names, LSB-first */
   const fp = await fpOf(pub);
@@ -355,25 +369,38 @@ async function makeRecord(priv, pub, pass, iter){
   assert.strictEqual(canonOdd.iter, 1500, "iter normalized to the integer actually used");
 
   /* 8. contact list import validation: {name, pub} / {name, publicKey} */
+  assert.strictEqual(cleanContactName("  Alice\u200B\u202E  \n Bob "), "Alice Bob",
+    "cleanContactName strips zero-width/bidi controls and collapses whitespace");
+  assert.strictEqual(cleanContactName("\u200B\u202E   "), "friend",
+    "cleanContactName defaults control-only names to 'friend'");
+  assert.strictEqual(cleanContactName("x".repeat(120)).length, 80,
+    "cleanContactName caps contact name length at 80 chars");
   const cList = contactsFromImport([
     { name: "  Alice ", pub: pubEnc(pub).toUpperCase() },
     { name: "", publicKey: pubEnc(other.pub) },
-    { name: "Alice Renamed", pub: pubEnc(pub) },   // duplicate pub updates in place
+    { name: "Alice\u200B Renamed", pub: pubEnc(pub) },   // duplicate pub updates in place, strips ZWSP
   ]);
   assert.deepStrictEqual(cList, [
     { name: "Alice Renamed", pub: pubEnc(pub) },
     { name: "friend", pub: pubEnc(other.pub) },
-  ], "contactsFromImport canonicalizes hex, trims names, defaults empty name, and deduplicates by pub");
+  ], "contactsFromImport canonicalizes hex, sanitizes names, defaults empty name, and deduplicates by pub");
   assert.throws(() => contactsFromImport([]), /non-empty/i);
   assert.throws(() => contactsFromImport({}), /non-empty/i);
   assert.throws(() => contactsFromImport([null]), /not an object/i);
   assert.throws(() => contactsFromImport([{ name: "Bob" }]), /missing a 'pub'/i);
   assert.throws(() => contactsFromImport([{ name: "Bob", pub: "not-hex" }]), /invalid hex/i);
+  for (const hVec of lowOrderHexVectors){
+    assert.throws(() => contactsFromImport([{ name: "Bad", pub: hVec }]), /low-order|invalid/i,
+      "contactsFromImport rejects low-order key " + hVec.slice(0, 8));
+  }
 
   /* 9. runtime WebView / browser detection */
   assert.strictEqual(
     checkRuntime("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"),
     null, "standard desktop Chrome passes");
+  assert.strictEqual(
+    checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36"),
+    null, "standard Android Chrome passes");
   assert.strictEqual(
     checkRuntime("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"),
     null, "standard desktop Edge passes");
@@ -405,8 +432,23 @@ async function makeRecord(priv, pub, pass, iter){
     checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1", { TelegramWebviewProxy: {} }),
     { kind: "webview", label: "Telegram in-app WebView" }, "Telegram WebView global proxy detected");
   assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 xhsdiscover/8.50.0 Safari/604.1"),
+    { kind: "webview", label: "Xiaohongshu in-app WebView" }, "Xiaohongshu iOS WebView detected despite Safari/ token");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 BiliApp/800 Safari/604.1"),
+    { kind: "webview", label: "Bilibili in-app WebView" }, "Bilibili iOS WebView detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 ZhihuHybrid osee2unifiedRelease/10.0.0 Safari/604.1"),
+    { kind: "webview", label: "Zhihu in-app WebView" }, "Zhihu iOS WebView detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 AliApp(TB/10.0) WindVane/8.0 Safari/604.1"),
+    { kind: "webview", label: "Alibaba/Taobao in-app WebView" }, "Taobao/Alibaba WebView detected");
+  assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36"),
     { kind: "webview", label: "Android in-app WebView" }, "generic Android WebView (; wv) detected");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36"),
+    { kind: "webview", label: "Android in-app WebView" }, "Android System WebView (Version/X.Y + Chrome/Z without ; wv) detected");
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"),
     { kind: "webview", label: "iOS in-app WebView" }, "generic iOS WKWebView (missing Safari/) detected");

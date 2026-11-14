@@ -405,6 +405,14 @@ async function decryptWith(privScalar, ownPubRaw, envStr){
   const { ephPub, iv, ct } = parseEnv(envStr);
   let ss, key;
   try {
+    try {
+      const derivedPub = await pubFromPriv(privScalar);
+      if (hex(derivedPub) !== hex(ownPubRaw))
+        throw new Error("Own public key does not match private key.");
+    } catch (e) {
+      if (e && /does not match/i.test(e.message)) throw e;
+      throw new Error("Own keypair is invalid.");
+    }
     ss = await x25519(privScalar, ephPub);
     if (isZero(ss)) throw new Error("Envelope's sender key is invalid (zero shared secret).");
     key = await hkdf32(ss, cat(ephPub, ownPubRaw));
@@ -490,10 +498,33 @@ async function recordFromImport(rec, scalar){
   };
 }
 
+/* All 7 255-bit X25519 u-coordinates (with top bit 255 masked off per RFC 7748)
+ * that represent points of order dividing 8 and yield an all-zero shared secret. */
+const LOW_ORDER_X25519 = new Set([
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+  "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+]);
+function isLowOrderPub(u8){
+  if (!(u8 instanceof Uint8Array) || u8.length !== 32) return true;
+  const masked = u8.slice();
+  masked[31] &= 0x7f;
+  return LOW_ORDER_X25519.has(hex(masked));
+}
+function cleanContactName(raw){
+  if (typeof raw !== "string") return "friend";
+  const s = raw.normalize("NFC").replace(/[\p{Cc}\p{Cf}]+/gu, "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return s || "friend";
+}
+
 /* Contact list import validation: accepts a JSON array of {name, pub} (also
  * tolerates publicKey as an alias for pub), validates and canonicalizes each
- * hex public key, defaults blank names to "friend", and deduplicates by pub
- * (later entries win). */
+ * hex public key, sanitizes and defaults blank names to "friend", and
+ * deduplicates by pub (later entries win). */
 function contactsFromImport(list){
   if (!Array.isArray(list) || !list.length)
     throw new Error("Expected a non-empty JSON array of contacts.");
@@ -506,10 +537,13 @@ function contactsFromImport(list){
       : (typeof c.publicKey === "string" ? c.publicKey : null);
     if (!rawPub)
       throw new Error("Contact #" + (i + 1) + " is missing a 'pub' (hex public key) field.");
-    let pubHex;
-    try { pubHex = pubEnc(pubDec(rawPub)); }
+    let pubBytes;
+    try { pubBytes = pubDec(rawPub); }
     catch { throw new Error("Contact #" + (i + 1) + " has an invalid hex public key (expected 64 hex chars)."); }
-    const name = typeof c.name === "string" && c.name.trim() ? c.name.trim() : "friend";
+    if (isLowOrderPub(pubBytes))
+      throw new Error("Contact #" + (i + 1) + " has an invalid (low-order) public key.");
+    const pubHex = pubEnc(pubBytes);
+    const name = cleanContactName(c.name);
     byPub.set(pubHex, { name, pub: pubHex });
   }
   return [...byPub.values()];
@@ -550,9 +584,15 @@ const WEBVIEW_RULES = [
   [/DingTalk/i, "DingTalk in-app WebView"],
   [/Feishu|LarkLocale/i, "Feishu/Lark in-app WebView"],
   [/AlipayClient/i, "Alipay in-app WebView"],
+  [/\b(?:AliApp|WindVane)\b/i, "Alibaba/Taobao in-app WebView"],
   [/\bWeibo\b|__weibo__/i, "Weibo in-app WebView"],
   [/BytedanceWebview|ByteLocale|Aweme|TikTok/i, "ByteDance/Douyin/TikTok in-app WebView"],
+  [/\bxhsdiscover\b|Xiaohongshu/i, "Xiaohongshu in-app WebView"],
+  [/\bBiliApp\b/i, "Bilibili in-app WebView"],
+  [/ZhihuHybrid|osee2unifiedRelease/i, "Zhihu in-app WebView"],
+  [/\b(?:Kwai|KsWebView)\b/i, "Kuaishou in-app WebView"],
   [/\b(?:FBAN|FBAV|FB_IAB|Instagram)\b/i, "Meta/Instagram in-app WebView"],
+  [/\bTwitter(?:Android|iPhone)?\b/i, "X/Twitter in-app WebView"],
   [/\bLine\//i, "LINE in-app WebView"],
   [/\bTelegram(?:Bot|Android|iOS)?\b/i, "Telegram in-app WebView"],
   [/\bElectron\//i, "Electron embedded WebView"],
@@ -588,6 +628,8 @@ function checkRuntime(ua, globals){
     if (re.test(s)) return { kind: "webview", label };
   for (const [re, label] of BROWSER_RULES)
     if (re.test(s)) return { kind: "browser", label };
+  if (/\bAndroid\b/i.test(s) && /\bVersion\/[\d.]+\b/i.test(s) && /\bChrome\/[\d.]+\b/i.test(s))
+    return { kind: "webview", label: "Android in-app WebView" };
   if (g.navigator && g.navigator.standalone === true && /AppleWebKit\//i.test(s))
     return null;
   if (/\b(?:iPhone|iPad|iPod)\b/i.test(s) && /AppleWebKit\//i.test(s)
@@ -610,7 +652,8 @@ if (typeof module !== "undefined" && typeof module.exports !== "undefined") {
     hex, pubEnc, pubDec, cat, isZero, TE, TD,
     CODECS, encodeEnv, decodeEnv, parseEnv,
     INFO, VER, PBKDF2_ITER,
-    PKCS8_X25519, X25519_BASE, EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
+    PKCS8_X25519, X25519_BASE, LOW_ORDER_X25519, isLowOrderPub, cleanContactName,
+    EMOJI, EMOJI_NAMES, genKeyPair, importPriv, importPub, x25519, pubFromPriv,
     hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar,
     parseRecord, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime };
 }

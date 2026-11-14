@@ -4,7 +4,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file: 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:; font-src 'none'; manifest-src 'self' file:; worker-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
 <meta name="theme-color" content="#090e17">
@@ -395,6 +396,11 @@
   <span id="rt-warn-msg"></span>
 </div>
 
+<div id="file-warn" class="rt-banner" hidden>
+  <b id="file-warn-title">Running from a local file (<code>file://</code>).</b>
+  <span id="file-warn-msg">In Chromium-based browsers (Chrome, Edge, Brave), all local <code>file://</code> pages share one <code>localStorage</code> bucket — opening any untrusted downloaded <code>.html</code> file in the same browser profile could read or overwrite your saved contacts and encrypted key record. Never open downloaded <code>.html</code> files in this profile (or use a dedicated browser profile, Firefox, or a local <code>localhost</code> server).</span>
+</div>
+
 <div id="tabs" role="tablist" aria-label="Sections">
   <button id="tab-setup" class="tabbtn" data-tab="setup" role="tab" aria-controls="sec-setup" type="button" aria-selected="true">Setup</button>
   <button id="tab-encrypt" class="tabbtn" data-tab="encrypt" role="tab" aria-controls="sec-encrypt" type="button" aria-selected="false">Encrypt</button>
@@ -434,7 +440,7 @@
         <p class="hint">Paste the exported JSON backup, or open the file below. The record itself is passphrase-encrypted; the passphrase is asked here to verify it.</p>
       </div>
       <div class="card-body">
-        <textarea id="imp-json" rows="5" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted key backup JSON" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
+        <textarea id="imp-json" rows="5" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted key backup JSON" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
         <input type="file" id="imp-file" accept=".json,application/json" aria-label="Select key backup JSON file">
         <label for="imp-pass">Passphrase</label>
         <input type="password" id="imp-pass" autocomplete="off">
@@ -452,7 +458,7 @@
       </div>
       <div class="card-body">
         <label for="pubout">Public key (hex) — share freely; friends add it as a contact</label>
-        <textarea id="pubout" rows="2" spellcheck="false" autocorrect="off" autocapitalize="off" readonly></textarea>
+        <textarea id="pubout" rows="2" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" readonly></textarea>
         <button id="btn-copy-pub" type="button">Copy public key</button>
         <label>Fingerprint — read over a voice call</label>
         <div class="fp-readout" translate="no">
@@ -465,7 +471,7 @@
     <div class="card">
       <div class="card-meta">
         <h2>Backup &amp; maintenance</h2>
-        <p class="hint">Export is already passphrase-encrypted — safe to keep in cloud storage or email. Apps that grab the file get noise. (To export or import contacts, use the Encrypt tab.)</p>
+        <p class="hint">Export is passphrase-encrypted — safe to keep in cloud storage or email <b>only if your passphrase is strong</b> (4+ random words). Offline attackers can brute-force short or simple passphrases. (To export or import contacts, use the Encrypt tab.)</p>
       </div>
       <div class="card-body">
         <button id="btn-export" class="primary" type="button">Download backup (.json)</button>
@@ -520,7 +526,7 @@
         <label for="ct-name">Name</label>
         <input type="text" id="ct-name" autocomplete="off" placeholder="e.g. Alice">
         <label for="ct-pub">Their public key (hex)</label>
-        <textarea id="ct-pub" rows="2" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="64 hex chars (32-byte public key)"></textarea>
+        <textarea id="ct-pub" rows="2" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder="64 hex chars (32-byte public key)"></textarea>
         <div id="ct-fp" hidden>
           <div class="fp-readout" translate="no">
             <div id="ct-fp-emoji" class="fp-emoji"></div>
@@ -538,7 +544,7 @@
         <button id="btn-export-contacts" class="primary" type="button">Download contacts (.json)</button>
         <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
         <label for="imp-contacts-json">Import contacts (JSON array)</label>
-        <textarea id="imp-contacts-json" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
+        <textarea id="imp-contacts-json" rows="4" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
         <input type="file" id="imp-contacts-file" accept=".json,application/json" aria-label="Select contacts JSON file">
         <button id="btn-import-contacts" type="button">Import contacts</button>
         <div id="imp-contacts-err" class="err" hidden></div>
@@ -552,7 +558,7 @@
       <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
     </div>
     <div class="card-body">
-      <textarea id="msg" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Message to encrypt" placeholder="Message to encrypt…"></textarea>
+      <textarea id="msg" rows="7" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Message to encrypt" placeholder="Message to encrypt…"></textarea>
       <div class="codec-row">
         <label for="codec-sel">Output format</label>
         <select id="codec-sel" aria-label="Envelope text encoding">
@@ -561,7 +567,7 @@
         </select>
       </div>
       <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
-      <textarea id="env-out" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted envelope" readonly hidden></textarea>
+      <textarea id="env-out" rows="4" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Encrypted envelope" readonly hidden></textarea>
       <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
       <button id="btn-clear-msg" type="button" hidden>Clear</button>
       <div id="enc-err" class="err" hidden></div>
@@ -578,12 +584,12 @@
     </div>
     <div class="card-body">
       <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
-      <textarea id="env-in" rows="4" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Envelope to decrypt" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
+      <textarea id="env-in" rows="4" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Envelope to decrypt" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
       <label for="dec-pass">Passphrase</label>
       <input type="password" id="dec-pass" autocomplete="off">
       <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
       <div id="dec-err" class="err" hidden></div>
-      <textarea id="plain-out" rows="7" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Decrypted message" placeholder="(empty message)" readonly hidden></textarea>
+      <textarea id="plain-out" rows="7" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="off" aria-label="Decrypted message" placeholder="(empty message)" readonly hidden></textarea>
       <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
       <button id="btn-clear-plain" type="button" hidden>Clear</button>
     </div>
@@ -624,7 +630,7 @@
         <li class="no">Sender authentication — <b>anyone with your public key can send you a decryptable message</b>. Judge senders by the voice ceremony and message context</li>
         <li class="no">Replay — an old but genuine message can be re-sent to you</li>
         <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
-        <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code></li>
+        <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code> (and in Chrome/Edge, all local <code>file://</code> pages share one <code>localStorage</code> bucket)</li>
         <li class="no">In-app browsers (WebViews), non-standard browsers, &amp; extensions — chat-app WebViews and extensions/userscripts (e.g. Tampermonkey, auto-translate, AI sidebars) can read the page DOM and steal passphrases or plaintext</li>
         <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
         <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
@@ -652,7 +658,7 @@
     </div>
     <div class="card-body">
       <ul>
-        <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML).</li>
+        <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML). If running from <code>file://</code> in Chrome/Edge, use a dedicated browser profile and never open downloaded <code>.html</code> files in it (or use Firefox or <code>localhost</code>).</li>
         <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
         <li>Always open this page in standalone Firefox, Chrome, Edge, or Safari — <b>never</b> inside a chat app's built-in browser/WebView — and disable browser extensions (Tampermonkey, translation plugins, AI sidebars) on this page.</li>
         <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
@@ -809,15 +815,17 @@ function loadState(){
   for (const c of Array.isArray(CONTACTS) ? CONTACTS : []){
     if (!c || typeof c.name !== "string" || typeof c.pub !== "string") continue;
     try {
-      const pub = pubEnc(pubDec(c.pub));
-      byPub.set(pub, { name: c.name.trim() || "friend", pub });
+      const pubBytes = pubDec(c.pub);
+      if (isLowOrderPub(pubBytes)) continue;
+      const pub = pubEnc(pubBytes);
+      byPub.set(pub, { name: cleanContactName(c.name), pub });
     } catch { /* skip corrupt entry */ }
   }
   CONTACTS = [...byPub.values()];
   if (RECORD && typeof RECORD.pub === "string"){
     try { parseRecord(RECORD); OWN_PUB = pubDec(RECORD.pub); }
     catch { RECORD = null; OWN_PUB = null; }
-    if (!OWN_PUB || OWN_PUB.length !== 32){ RECORD = null; OWN_PUB = null; }
+    if (!OWN_PUB || OWN_PUB.length !== 32 || isLowOrderPub(OWN_PUB)){ RECORD = null; OWN_PUB = null; }
   } else if (RECORD){ RECORD = null; }
 }
 
@@ -868,10 +876,8 @@ async function renderContacts(){
     let idx = CONTACTS.findIndex(c => c.pub === LAST_PUB);
     if (idx < 0) idx = 0;
     LAST_PUB = CONTACTS[idx].pub;
-    const nameCounts = new Map();
-    for (const c of CONTACTS) nameCounts.set(c.name, (nameCounts.get(c.name) || 0) + 1);
     sel.innerHTML = CONTACTS.map((c, i) => {
-      const label = nameCounts.get(c.name) > 1 ? `${c.name} (${c.pub.slice(0, 8)}…)` : c.name;
+      const label = `${c.name} (${c.pub.slice(0, 8)}…)`;
       return `<option value="${i}"${i === idx ? " selected" : ""}>${esc(label)}</option>`;
     }).join("");
     $("#btn-del-contact").disabled = false;
@@ -925,14 +931,14 @@ function clearPlain(){
 /* ---------- setup handlers ---------- */
 $("#gen-pass").addEventListener("input", (e) => {
   const v = e.currentTarget.value;
-  $("#gen-warn").hidden = v.length >= 12 || v.length === 0;
+  $("#gen-warn").hidden = v.trim().length >= 12 || v.length === 0;
 });
 
 $("#btn-generate").addEventListener("click", async (e) => {
   const err = $("#gen-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.currentTarget;
   const p1 = $("#gen-pass").value, p2 = $("#gen-pass2").value;
-  if (!p1) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
+  if (!p1.trim()) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
   if (p1 !== p2) return showErr(err, "Passphrases don't match.");
   clearFlash(btn);
   $("#btn-generate").disabled = true; $("#btn-import").disabled = true;
@@ -985,9 +991,18 @@ $("#btn-import").addEventListener("click", async (e) => {
   try {
     parseRecord(rec);
     if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
-    pubDec(rec.pub);
+    if (isLowOrderPub(pubDec(rec.pub))) throw new Error("Record has an invalid (low-order) public key.");
     scalar = await unwrapScalar(pass, rec);          // throws on wrong passphrase
-    RECORD = await recordFromImport(rec, scalar);    // throws on missing/mismatched pub
+    let nextRec = await recordFromImport(rec, scalar); // throws on missing/mismatched pub
+    if (nextRec.iter < PBKDF2_ITER){
+      const w = await wrapScalar(pass, scalar, PBKDF2_ITER);
+      nextRec = {
+        ...nextRec,
+        iter: PBKDF2_ITER,
+        salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
+      };
+    }
+    RECORD = nextRec;
     OWN_PUB = pubDec(RECORD.pub);
     $("#imp-json").value = ""; $("#imp-pass").value = ""; $("#imp-file").value = "";
     await renderSetup();
@@ -1036,7 +1051,7 @@ $("#btn-copy-backup").addEventListener("click", (b) => {
 
 $("#ch-new").addEventListener("input", (e) => {
   const v = e.currentTarget.value;
-  $("#ch-warn").hidden = v.length >= 12 || v.length === 0;
+  $("#ch-warn").hidden = v.trim().length >= 12 || v.length === 0;
 });
 
 $("#btn-chpass").addEventListener("click", async (e) => {
@@ -1046,20 +1061,23 @@ $("#btn-chpass").addEventListener("click", async (e) => {
   const targetRec = RECORD;
   if (!targetRec) return showErr(err, "No key stored.");
   if (!old) return showErr(err, "Enter the current passphrase.");
-  if (!n1 || n1 !== n2) return showErr(err, "New passphrases are empty or don't match.");
+  if (!n1.trim() || n1 !== n2) return showErr(err, "New passphrases are empty or don't match.");
   clearFlash(btn);
   btn.disabled = true; btn.textContent = "Working…";
   let ok = false, scalar = null;
   try {
     scalar = await unwrapScalar(old, targetRec);
-    // Re-wrap at the current default so legacy records upgrade their KDF cost.
-    const w = await wrapScalar(n1, scalar, PBKDF2_ITER);
+    const canon = await recordFromImport(targetRec, scalar);
+    // Re-wrap at least at PBKDF2_ITER, preserving higher iteration counts if present.
+    const nextIter = Math.max(canon.iter, PBKDF2_ITER);
+    const w = await wrapScalar(n1, scalar, nextIter);
     if (RECORD !== targetRec) return;
     RECORD = {
-      ...targetRec,
-      iter: PBKDF2_ITER,
+      ...canon,
+      iter: nextIter,
       salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
     };
+    OWN_PUB = pubDec(RECORD.pub);
     $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
     $("#ch-warn").hidden = true;
     try { saveRecord(); }
@@ -1147,6 +1165,7 @@ $("#ct-pub").addEventListener("input", () => {
     if (!v) return;
     try {
       const pub = pubDec(v);
+      if (isLowOrderPub(pub)) throw new Error("low-order");
       const fp = await fpOf(pub);
       if ($("#ct-pub").value.trim() !== v) return;
       $("#ct-fp").hidden = false;
@@ -1161,11 +1180,13 @@ $("#ct-pub").addEventListener("input", () => {
 $("#btn-add-contact").addEventListener("click", async (e) => {
   const err = $("#ct-err"); hideErr(err); hideErr($("#contacts-warn"));
   const btn = e.currentTarget;
-  const name = $("#ct-name").value.trim() || "friend";
+  const name = cleanContactName($("#ct-name").value);
   const pubStr = $("#ct-pub").value.trim();
   if (!pubStr) return showErr(err, "Paste their public key (hex).");
   let pub;
   try { pub = pubDec(pubStr); } catch { return showErr(err, "Public key is not valid hex (expected 64 chars, 0-9a-f)."); }
+  if (isLowOrderPub(pub))
+    return showErr(err, "This public key is invalid (low-order point) and cannot be used.");
   const pubHex = pubEnc(pub);   // canonical form (lowercase)
   if (CONTACTS.some(c => c.pub === pubHex))
     return showErr(err, "This public key is already saved.");
@@ -1255,17 +1276,36 @@ $("#btn-import-contacts").addEventListener("click", async (e) => {
   try {
     const incoming = contactsFromImport(list);
     const byPub = new Map(CONTACTS.map(c => [c.pub, c]));
-    for (const c of incoming) byPub.set(c.pub, c);
+    let renamed = false;
+    for (const c of incoming){
+      const prev = byPub.get(c.pub);
+      if (prev && prev.name !== c.name) renamed = true;
+      byPub.set(c.pub, c);
+    }
     CONTACTS = [...byPub.values()];
-    LAST_PUB = incoming[incoming.length - 1].pub;
+    const lowerCounts = new Map();
+    for (const c of CONTACTS){
+      const k = c.name.toLowerCase();
+      lowerCounts.set(k, (lowerCounts.get(k) || 0) + 1);
+    }
+    const dupNames = [...lowerCounts.values()].some(n => n > 1);
+    if (!LAST_PUB || !CONTACTS.some(c => c.pub === LAST_PUB))
+      LAST_PUB = incoming[incoming.length - 1].pub;
     $("#imp-contacts-json").value = "";
     $("#imp-contacts-file").value = "";
     clearStaleEnv();
     await renderContacts();
+    let warnMsg = "";
+    if (renamed || dupNames){
+      warnMsg = "Note: imported contacts renamed an existing key or share a name — verify the 12-emoji fingerprint before encrypting.";
+    }
     try {
       saveContacts();
       localStorage.setItem(LS_LAST, LAST_PUB);
-    } catch (se){ showErr($("#contacts-warn"), se.message || "Could not persist contacts to browser storage."); }
+    } catch (se){
+      warnMsg = se.message || "Could not persist contacts to browser storage.";
+    }
+    if (warnMsg) showErr($("#contacts-warn"), warnMsg);
     flash(btn, "Imported ✓");
   } catch (ex){ showErr(err, ex.message || "Could not import contacts."); }
 });
@@ -1280,7 +1320,10 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   if (!msgText) return showErr(err, "Enter a message to encrypt.");
   const codecTag = $("#codec-sel").value;
   let pub;
-  try { pub = pubDec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
+  try {
+    pub = pubDec(c.pub);
+    if (isLowOrderPub(pub)) throw new Error("low-order");
+  } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").value = "";
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
@@ -1363,6 +1406,12 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
 $("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.currentTarget));
 $("#btn-clear-plain").addEventListener("click", clearPlain);
 
+window.addEventListener("pagehide", () => {
+  clearPlain();
+  $("#gen-pass").value = $("#gen-pass2").value = $("#imp-pass").value = "";
+  $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
+});
+
 for (const [inp, btn] of [["#gen-pass2", "#btn-generate"], ["#imp-pass", "#btn-import"], ["#ch-new2", "#btn-chpass"], ["#dec-pass", "#btn-decrypt"]])
   $(inp).addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !$(btn).disabled){ e.preventDefault(); $(btn).click(); }
@@ -1379,10 +1428,24 @@ for (const b of $$("#tabs .tabbtn"))
     $("#ctx-warn").hidden = false;
     for (const el of $$("main button, main input, main textarea, main select")) el.disabled = true;
   };
+  try {
+    if (window.self !== window.top){
+      bail("Framing is not allowed.",
+        "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.");
+      return;
+    }
+  } catch {
+    bail("Framing is not allowed.",
+      "ecdh.html refuses to run inside an iframe to prevent clickjacking. Open this page directly in a top-level browser tab.");
+    return;
+  }
   if (typeof genKeyPair !== "function" || typeof checkRuntime !== "function"){
     bail("Missing crypto.js.",
       "crypto.js could not be loaded. Keep crypto.js in the same folder as index.html (do not use browser 'Save Page As — HTML Only'). Buttons are disabled.");
     return;
+  }
+  if (location.protocol === "file:"){
+    $("#file-warn").hidden = false;
   }
   const rt = checkRuntime(navigator.userAgent, window);
   if (rt){
