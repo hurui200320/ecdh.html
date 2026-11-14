@@ -3,14 +3,13 @@
  * Crypto-core cross-check for ecdh.html — no browser required.
  * Needs Node >= 18.4 (global WebCrypto with X25519).
  *
- * Slices the DOM-free crypto core out of index.html (between the
- * "BEGIN/END testable core" markers), then verifies it against Node's
- * independent OpenSSL implementation — the same operations as the
- * BouncyCastle interop recipe in README.md:
+ * Requires crypto.js — the DOM-free crypto core loaded by index.html —
+ * and verifies it against Node's independent OpenSSL implementation — the
+ * same operations as the BouncyCastle interop recipe in README.md:
  *
  *   - raw scalar <-> key objects via the pinned DER prefixes
  *   - X25519 ECDH, HKDF-SHA-256 (salt = ephPub || recipientPub), AES-256-GCM
- *   - PBKDF2-HMAC-SHA256 passphrase wrapper (incl. the production 600k cost)
+ *   - PBKDF2-HMAC-SHA256 passphrase wrapper (incl. the production 800k cost)
  *   - SHA-256 fingerprint and the 12-emoji (72-bit, LSB-first) mapping
  *   - import validation: pub required, verified, record canonicalized
  *   - documented failure paths: zero shared secret, tampering, wrong
@@ -20,24 +19,11 @@
  */
 "use strict";
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 const assert = require("assert");
 const nc = require("node:crypto");
 
-/* ---- extract the core from index.html ---- */
-const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
-const m = html.match(/\/\* ====== BEGIN testable core[\s\S]*?===== END testable core ====== \*\//);
-assert(m, "testable-core markers not found in index.html");
-const tmp = path.join(os.tmpdir(), `ecdh-core-${process.pid}.js`);
-fs.writeFileSync(tmp, m[0] +
-  "\nmodule.exports = { b64enc, b64dec, b64decSafe, hex, cat, isZero, INFO, VER, PBKDF2_ITER," +
-  " PKCS8_X25519, X25519_BASE, EMOJI, genKeyPair, importPriv, importPub, x25519, pubFromPriv," +
-  " hkdf32, sha256, x25519Supported, encryptTo, decryptWith, aesKeyFromPass, wrapScalar," +
-  " unwrapScalar, recordFromImport, fpOf };\n");
-const core = require(tmp);
-try { fs.unlinkSync(tmp); } catch { /* best effort */ }
+/* ---- the core, required directly (the same bytes the browser loads) ---- */
+const core = require("../crypto.js");
 
 const { b64enc, b64dec, b64decSafe, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
@@ -127,10 +113,10 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(unwrapScalar("x", { ...rec, ct: b64enc(new Uint8Array(30)) }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 0 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, kdf: "PBKDF2-HMAC-SHA512" }), /unsupported KDF/i);
-  assert.strictEqual(PBKDF2_ITER, 600000, "production iteration count is pinned");
+  assert.strictEqual(PBKDF2_ITER, 800000, "production iteration count is pinned");
   const big = await makeRecord(priv, pub, "another pass", PBKDF2_ITER);
   assert.ok(Buffer.from(await unwrapScalar("another pass", big)).equals(Buffer.from(priv)),
-    "full-cost (600k) wrapper round-trip");
+    "full-cost (800k) wrapper round-trip");
 
   /* OpenSSL cross-check of the wrapper: PBKDF2 + AES-GCM unwrap */
   {

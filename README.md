@@ -3,9 +3,9 @@
 A simple and static web page for you and your average friend who not care
 about security to share secrets safely (to some level) over a untrusted channel.
 
-This is a single static page you host yourself for exchanging encrypted text over
-distrusted channels. No CDN, no libraries, no build step, no backend, no
-telemetry — every byte served comes out of this repo.
+This is a tiny static site that you host yourself for exchanging encrypted text over
+distrusted channels. No CDN, no libraries, no backend, no telemetry — every byte
+served comes out of this repo.
 
 > LLM usage: I use LLM to implement all the html, js and css.
 > I have reviewed the outcome and decided to trust the artifacts.
@@ -58,7 +58,7 @@ and rewrite everything it carries.
 | Message contents vs tapped/monitored channels | X25519 ECDH + AES-256-GCM, fresh key per message |
 | Tampered or forged ciphertext | GCM tag — any modification = failed decryption |
 | Key-substitution MITM (fake public keys) | Fingerprint voice-verification ceremony + all-zero shared-secret rejection |
-| Private key at rest (device storage **and** backup file) | Mandatory passphrase wrap: PBKDF2-HMAC-SHA256 (600k iter) + AES-256-GCM |
+| Private key at rest (device storage **and** backup file) | Mandatory passphrase wrap: PBKDF2-HMAC-SHA256 (800k iter) + AES-256-GCM |
 | Availability during an emergency | Static files only; offline PWA cache; a saved copy works from `file://`; decryption needs zero server involvement |
 | Interop with your own trusted tools | Byte-exact spec below, implementable in BouncyCastle in an afternoon |
 
@@ -118,7 +118,7 @@ censorship-tolerant, dependency-free, human-ceremony emergency comms.
 | Fingerprint = SHA-256 → 72 bits → 12 emoji (+ full hex) | Readable aloud; 24-bit fingerprints are brute-forceable (see above) |
 | No sender signatures | Operational convention instead (ceremony step 4) |
 | No replay/timestamps, no AAD | See not-protected table; simplicity is a security feature in a rarely-used emergency tool |
-| Offline PWA + `file://` capability | Emergencies + hosting-seizure tolerance; hosts only distribute the file |
+| Offline PWA + `file://` capability | Emergencies + hosting-seizure tolerance; hosts only distribute the files |
 | No test vectors embedded | The byte-exact spec below + DER constants are the interop contract |
 
 ---
@@ -167,7 +167,7 @@ fixed 64-emoji alphabet) for reading aloud.
 Chunk order, spelled out for implementers: let `v` be the 72-bit big-endian
 integer built from digest bytes 0–8; then twelve times: `emoji[i] =
 ALPHABET[v mod 64]`, `v = floor(v / 64)`. The **leftmost** emoji carries the
-*least*-significant 6 bits. `ALPHABET` is the `EMOJI` array in `index.html`,
+*least*-significant 6 bits. `ALPHABET` is the `EMOJI` array in `crypto.js`,
 in source order.
 
 Test vector: the 32-byte all-zero public key hashes to
@@ -183,7 +183,7 @@ its 12-emoji fingerprint renders as
   "type": "x25519-private",
   "pub":   "<b64, raw 32-byte public key, plaintext field>",
   "kdf":   "PBKDF2-HMAC-SHA256",
-  "iter":  600000,
+  "iter":  800000,
   "salt":  "<b64, 16 bytes>",
   "cipher":"AES-256-GCM",
   "iv":    "<b64, 12 bytes>",
@@ -220,9 +220,10 @@ its 12-emoji fingerprint renders as
 
 ### Calm-day setup (once per person)
 
-1. Deploy (below), and **save a copy of `index.html`** on your devices/drives —
-   a saved file is a full offline-capable instance. Optionally record the
-   file's SHA-256 on paper next to your fingerprints.
+1. Deploy (below), and **save copies of `index.html` and `crypto.js` (same
+   folder)** on your devices/drives — a saved pair is a full offline-capable
+   instance. Optionally record the SHA-256 of `index.html` and `crypto.js`
+   on paper next to your fingerprints.
 2. Generate your identity with a **strong passphrase** (4+ random words).
 3. **Export the backup JSON** and keep it somewhere survivable (email it to
    yourself, USB stick, password manager attachment — it's ciphertext; its
@@ -261,7 +262,8 @@ contact and add the new one.
 
 | File | Purpose |
 |---|---|
-| `index.html` | The entire app — inline CSS + JS, responsive, PC/mobile |
+| `index.html` | The app — UI + inline CSS; loads `crypto.js` |
+| `crypto.js` | DOM-free crypto core (X25519/HKDF/AES-GCM/PBKDF2/fingerprints), also used by the Node test |
 | `sw.js` | Cache-first service worker (offline) |
 | `manifest.json` | Minimal PWA manifest |
 | `icon.svg` | Icon |
@@ -297,7 +299,7 @@ Crypto-core cross-check (no browser needed; Node >= 18.4 for X25519):
 node tests/crypto.test.js
 ```
 
-Slices the DOM-free crypto core out of `index.html` and verifies the DER
+Loads `crypto.js` (the DOM-free crypto core the page loads) and verifies the DER
 prefixes, envelope layout, HKDF derivation, PBKDF2 wrapper, and emoji
 fingerprints against Node's independent OpenSSL implementation (the same
 operations as the BouncyCastle recipe above), plus the documented failure
@@ -308,7 +310,7 @@ Validated in headless Chromium via Playwright:
 
 - Page boots behind plain HTTP on a LAN IP → Web Crypto banner, buttons
   disabled (env: localhost works, `file://` works)
-- Keypair generation; storage wrap (PBKDF2 600k + AES-GCM); 44-char pubkey;
+- Keypair generation; storage wrap (PBKDF2 800k + AES-GCM); 44-char pubkey;
   12-emoji + hex fingerprint rendered
 - Contact add with live fingerprint preview; fingerprint deterministic across
   views; contact removal
