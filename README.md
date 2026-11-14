@@ -306,6 +306,7 @@ Test vector (32-byte all-zero public key):
   - `ecdh.key.v1` — the JSON record above (private scalar encrypted; `pub` in plaintext)
   - `ecdh.contacts.v1` — `[{"name": "...", "pub": "<64-char hex>"}]` (stored and exported/imported in plaintext; importers also accept `"publicKey"` as an alias for `"pub"`, canonicalizing to `"pub"`)
   - `ecdh.lastcontact.v1` — hex public key of the last selected contact (stored in plaintext)
+  - `ecdh.theme.v1` — optional UI color-scheme preference (`"light"` or `"dark"`; when unset, follows the browser default)
 
 #### BouncyCastle / JVM interoperability reference
 

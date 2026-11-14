@@ -5,103 +5,353 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
-<meta name="theme-color" content="#0f172a">
+<meta name="theme-color" content="#090e17">
 <title>ecdh.html</title>
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="manifest" href="manifest.json">
 <style>
-  :root{
-    --bg:#f2f5f9; --card:#ffffff; --ink:#101828; --muted:#667085;
-    --accent:#2563eb; --accent-ink:#ffffff; --danger:#dc2626; --ok:#059669;
-    --warn:#b45309; --warnbg:#fffbeb;
-    --line:#e0e6ef; --errbg:#fef2f2; --radius:14px;
+  @font-face{
+    font-family:"SwissCJK";
+    src:local("PingFang SC"),local("PingFang TC"),local("Hiragino Sans GB"),
+        local("Hiragino Sans"),local("Noto Sans CJK SC"),local("Source Han Sans SC"),
+        local("Microsoft YaHei UI"),local("Microsoft YaHei"),local("WenQuanYi Micro Hei");
+    unicode-range:U+2E80-2EFF,U+3000-303F,U+31C0-31EF,U+3200-9FFF,U+F900-FAFF,U+FE30-FE4F,U+FF00-FFEF;
+    size-adjust:94%;
+  }
+  @font-face{
+    font-family:"SwissCJK";
+    font-weight:600 700;
+    src:local("PingFang SC Semibold"),local("PingFang SC Medium"),
+        local("Hiragino Sans GB W6"),local("Noto Sans CJK SC Medium"),
+        local("Source Han Sans SC Medium"),local("Microsoft YaHei UI Bold"),
+        local("Microsoft YaHei Bold"),local("PingFang SC"),local("Noto Sans CJK SC"),
+        local("Microsoft YaHei");
+    unicode-range:U+2E80-2EFF,U+3000-303F,U+31C0-31EF,U+3200-9FFF,U+F900-FAFF,U+FE30-FE4F,U+FF00-FFEF;
+    size-adjust:94%;
+  }
+  :root, :root[data-theme="light"]{
+    color-scheme:light;
+    --font-sans:"Helvetica Neue",Helvetica,Arial,"SwissCJK",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --font-mono:ui-monospace,"SFMono-Regular",Menlo,Monaco,Consolas,"Liberation Mono","SwissCJK",monospace;
+    --bg:#f2f5f8; --card:#ffffff; --surface:#f8fafc;
+    --ink:#090e17; --muted:#4b5c73;
+    --line:#cbd5e1; --frame:#090e17;
+    --accent:#0052ff; --accent-hover:#003ecb; --accent-ink:#ffffff;
+    --cyan:#007a99; --cyan-bright:#06b6d4; --cyan-tint:#ecfeff;
+    --danger:#dc2626; --errbg:#fef2f2;
+    --ok:#059669; --warn:#b45309; --warnbg:#fffbeb;
+  }
+  :root[data-theme="dark"]{
+    color-scheme:dark;
+    --bg:#060a10; --card:#0b111c; --surface:#0f1726;
+    --ink:#eef4fb; --muted:#8496ae;
+    --line:#1e2c40; --frame:#22d3ee;
+    --accent:#2563eb; --accent-hover:#3b82f6; --accent-ink:#ffffff;
+    --cyan:#22d3ee; --cyan-bright:#22d3ee; --cyan-tint:#0b2230;
+    --danger:#f87171; --errbg:#281115;
+    --ok:#34d399; --warn:#fbbf24; --warnbg:#261c07;
   }
   @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#0b1220; --card:#111a2c; --ink:#e6edf8; --muted:#8b98ad;
-      --accent:#3b82f6; --accent-ink:#ffffff; --danger:#f87171; --ok:#34d399;
-      --warn:#fbbf24; --warnbg:#291f07;
-      --line:#22303f; --errbg:#2a1214;
+    :root:not([data-theme="light"]){
+      color-scheme:dark;
+      --bg:#060a10; --card:#0b111c; --surface:#0f1726;
+      --ink:#eef4fb; --muted:#8496ae;
+      --line:#1e2c40; --frame:#22d3ee;
+      --accent:#2563eb; --accent-hover:#3b82f6; --accent-ink:#ffffff;
+      --cyan:#22d3ee; --cyan-bright:#22d3ee; --cyan-tint:#0b2230;
+      --danger:#f87171; --errbg:#281115;
+      --ok:#34d399; --warn:#fbbf24; --warnbg:#261c07;
     }
   }
   *{ box-sizing:border-box; }
   html,body{ margin:0; padding:0; }
   body{
     background:var(--bg); color:var(--ink);
-    font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    padding:14px 12px 60px;
+    font:15px/1.55 var(--font-sans);
+    -webkit-font-smoothing:antialiased;
+    padding:20px 16px 64px;
   }
-  main,header,footer{ max-width:740px; margin:0 auto; }
-  h1{ font-size:1.35rem; margin:0; letter-spacing:.3px; }
-  .sub{ color:var(--muted); font-size:.85rem; margin:.25rem 0 0; }
+  header,nav#tabs,main,footer,.ctx-banner,.rt-banner{ max-width:920px; margin-left:auto; margin-right:auto; }
+  header{
+    border-top:4px solid var(--frame);
+    border-left:1px solid var(--line);
+    border-right:1px solid var(--line);
+    background:var(--card);
+    padding:18px 22px 16px;
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px 20px;
+  }
+  .masthead{ min-width:0; flex:1 1 auto; }
+  h1{
+    font-size:1.65rem; font-weight:700; margin:0;
+    letter-spacing:-.03em; line-height:1.1;
+  }
+  h1::after{
+    content:"v1";
+    font:600 .7rem/1 var(--font-mono);
+    color:var(--cyan);
+    border:1px solid var(--cyan-bright);
+    padding:2px 5px; margin-left:8px; vertical-align:middle; letter-spacing:.05em;
+  }
+  .sub{
+    color:var(--muted); font:500 .76rem/1.4 var(--font-mono);
+    margin:6px 0 0; letter-spacing:.02em;
+  }
+  button.theme-btn{
+    margin:0; padding:6px 10px; min-height:30px;
+    font:600 .7rem/1 var(--font-mono); letter-spacing:.06em;
+    color:var(--muted); background:var(--surface);
+    border:1px solid var(--line); white-space:nowrap; flex-shrink:0;
+  }
+  nav#tabs{
+    display:grid; grid-template-columns:repeat(4,1fr);
+    position:sticky; top:0; z-index:10;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-bottom:2px solid var(--ink);
+    counter-reset:tab;
+    margin-bottom:0;
+  }
+  nav#tabs button{
+    margin:0; border:0; border-right:1px solid var(--line); border-radius:0;
+    background:transparent; color:var(--muted);
+    font:700 .78rem/1.2 var(--font-sans);
+    text-transform:uppercase; letter-spacing:.08em;
+    padding:13px 10px; min-height:46px;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    transition:background .12s,color .12s;
+  }
+  nav#tabs button:last-child{ border-right:0; }
+  nav#tabs button::before{
+    counter-increment:tab;
+    content:"0" counter(tab);
+    font:600 .7rem/1 var(--font-mono);
+    color:var(--muted); opacity:.75;
+  }
+  nav#tabs button:hover{ color:var(--ink); background:var(--card); }
+  nav#tabs button[aria-selected="true"]{
+    background:var(--card); color:var(--ink);
+    box-shadow:inset 0 3px 0 var(--cyan-bright);
+  }
+  nav#tabs button[aria-selected="true"]::before{
+    color:var(--cyan); opacity:1;
+  }
+  main section, #setup-none, #setup-have{ counter-reset:sec; }
   .card{
-    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
-    padding:18px; margin:14px 0;
+    background:var(--card);
+    border:1px solid var(--line);
+    border-top:0;
+    margin:0;
   }
-  .card h2{ font-size:1.02rem; margin:0 0 10px; }
-  .hint{ color:var(--muted); font-size:.85rem; margin:.4rem 0 .8rem; }
-  .warn{ color:var(--warn); font-size:.85rem; margin:.5rem 0; }
-  .err{ color:var(--danger); background:var(--errbg); border-radius:10px; padding:10px 12px; margin:.6rem 0; font-size:.9rem; }
-  label{ display:block; font-size:.85rem; color:var(--muted); margin:.9rem 0 .3rem; }
-  input[type=password], input[type=text]{
-    width:100%; padding:12px 14px; font-size:1rem; color:var(--ink);
-    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+  @media (min-width: 720px){
+    .card{
+      display:grid;
+      grid-template-columns:260px minmax(0,1fr);
+    }
+    .card-meta{
+      padding:24px 22px;
+      border-right:1px solid var(--line);
+      background:var(--surface);
+    }
+    .card-meta h2::before{
+      counter-increment:sec;
+      content:"0" counter(sec);
+      display:block;
+      font:600 .72rem/1 var(--font-mono);
+      color:var(--cyan);
+      letter-spacing:.1em;
+      margin-bottom:8px;
+    }
+    .card-body{ padding:24px 28px; min-width:0; }
   }
-  input[type=file]{ display:block; margin:.6rem 0; font-size:.85rem; color:var(--muted); width:100%; }
+  @media (max-width: 719px){
+    body{ padding:0 0 48px; }
+    header{ border-left:0; border-right:0; padding:14px 16px; }
+    nav#tabs{ border-left:0; border-right:0; }
+    nav#tabs button{
+      flex-direction:column; gap:3px;
+      padding:9px 4px; font-size:.7rem; letter-spacing:.05em;
+    }
+    .card{ border-left:0; border-right:0; }
+    .card-meta{
+      padding:16px 16px 12px;
+      border-bottom:1px solid var(--line);
+      background:var(--surface);
+    }
+    .card-meta h2::before{
+      counter-increment:sec;
+      content:"0" counter(sec) " / ";
+      font:600 .78rem/1 var(--font-mono);
+      color:var(--cyan);
+      letter-spacing:.04em;
+    }
+    .card-body{ padding:16px; }
+  }
+  .card h2{
+    font-size:1.02rem; font-weight:700;
+    letter-spacing:-.01em; margin:0;
+  }
+  .card-meta .hint{ margin:.55rem 0 0; }
+  .hint{ color:var(--muted); font-size:.83rem; line-height:1.55; margin:.4rem 0 .8rem; }
+  .warn{
+    color:var(--warn); background:var(--warnbg);
+    border-left:3px solid var(--warn);
+    padding:8px 12px; font-size:.83rem; margin:.6rem 0;
+  }
+  .err{
+    color:var(--danger); background:var(--errbg);
+    border:1px solid var(--danger); border-left-width:3px;
+    padding:10px 12px; margin:.6rem 0; font-size:.86rem;
+  }
+  label{
+    display:block; font-size:.73rem; font-weight:700;
+    text-transform:uppercase; letter-spacing:.06em;
+    color:var(--muted); margin:1.1rem 0 .35rem;
+  }
+  .card-body > :first-child{ margin-top:0; }
+  input[type=password], input[type=text], select{
+    width:100%; padding:11px 12px; font:1rem/1.3 var(--font-sans); color:var(--ink);
+    background:var(--surface); border:1px solid var(--line); border-radius:0;
+    appearance:none;
+  }
+  select{
+    background-image:linear-gradient(45deg,transparent 50%,var(--cyan) 50%),linear-gradient(135deg,var(--cyan) 50%,transparent 50%);
+    background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%;
+    background-size:5px 5px,5px 5px;
+    background-repeat:no-repeat;
+    padding-right:32px;
+  }
+  input[type=file]{
+    display:block; margin:.6rem 0; padding:8px;
+    font:12px/1.4 var(--font-mono); color:var(--muted);
+    background:var(--surface); border:1px dashed var(--line); width:100%;
+  }
   textarea{
-    width:100%; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:10px;
-    padding:12px; resize:vertical;
+    width:100%; font:13.5px/1.65 var(--font-mono);
+    font-variant-numeric:tabular-nums;
+    color:var(--ink); background:var(--surface);
+    border:1px solid var(--line); border-radius:0;
+    padding:12px; resize:vertical; display:block;
   }
   textarea[readonly]{ color:var(--muted); }
+  input[type=password]:focus, input[type=text]:focus, select:focus, textarea:focus{
+    outline:none; border-color:var(--cyan-bright);
+    box-shadow:inset 3px 0 0 var(--cyan-bright);
+    background:var(--card);
+  }
   button{
-    font:600 .95rem system-ui,sans-serif; color:var(--ink);
-    background:var(--bg); border:1px solid var(--line); border-radius:10px;
-    padding:12px 18px; margin:.4rem .4rem .4rem 0; cursor:pointer; min-height:46px;
+    font:700 .78rem/1.2 var(--font-sans);
+    text-transform:uppercase; letter-spacing:.07em;
+    color:var(--ink); background:var(--surface);
+    border:1px solid var(--line); border-radius:0;
+    padding:12px 18px; margin:.5rem .4rem .2rem 0;
+    cursor:pointer; min-height:44px;
+    transition:background .12s,border-color .12s,color .12s;
   }
-  button:disabled{ opacity:.45; cursor:default; }
-  button.primary{ background:var(--accent); border-color:var(--accent); color:var(--accent-ink); }
+  button:hover:not(:disabled){
+    border-color:var(--cyan-bright); color:var(--cyan); background:var(--cyan-tint);
+  }
+  button:focus-visible{ outline:2px solid var(--cyan-bright); outline-offset:2px; }
+  button:disabled{ opacity:.4; cursor:default; }
+  button.primary{
+    background:var(--accent); border-color:var(--accent); color:var(--accent-ink);
+  }
+  button.primary:hover:not(:disabled){
+    background:var(--accent-hover); border-color:var(--accent-hover); color:var(--accent-ink);
+  }
   button.danger{ border-color:var(--danger); color:var(--danger); background:transparent; }
+  button.danger:hover:not(:disabled){ background:var(--errbg); border-color:var(--danger); color:var(--danger); }
   button.armed{ background:var(--danger); border-color:var(--danger); color:#fff; }
-  nav#tabs{ display:flex; gap:6px; margin:16px 0 4px; flex-wrap:wrap; position:sticky; top:0; z-index:5;
-    background:var(--bg); padding:8px 0 2px; }
-  nav#tabs button{ flex:1 1 auto; min-height:44px; opacity:.7; border-radius:12px; }
-  nav#tabs button[aria-selected="true"]{ border-color:var(--accent); color:var(--accent); opacity:1; }
-  nav#tabs button[aria-selected="true"]::before{ content:"● "; font-size:.6rem; vertical-align:2px; }
-  .fp-emoji{ font-size:1.7rem; letter-spacing:.35em; word-break:break-word; margin:.4rem 0; }
-  .fp-hex{ font:12px ui-monospace,monospace; color:var(--muted); word-break:break-all; letter-spacing:1px; }
-  .fp-hex::before{ content:"sha256: "; }
-  select{
-    width:100%; padding:12px 14px; font-size:1rem; color:var(--ink);
-    background:var(--bg); border:1px solid var(--line); border-radius:10px;
+  button.armed:hover:not(:disabled){ background:var(--danger); border-color:var(--danger); color:#fff; }
+  .fp-readout{
+    border:1px solid var(--line); border-left:3px solid var(--cyan-bright);
+    background:var(--surface); padding:12px 14px; margin:.35rem 0;
   }
-  .codec-row{ display:flex; align-items:center; gap:12px; margin:.6rem 0 .2rem; }
+  .fp-emoji{
+    font-size:1.35rem; line-height:1.45; letter-spacing:.16em;
+    word-break:break-word; margin:0 0 8px;
+  }
+  .fp-hex{
+    font:11.5px/1.45 var(--font-mono); color:var(--muted);
+    word-break:break-all; letter-spacing:.05em;
+    border-top:1px dashed var(--line); padding-top:7px;
+  }
+  .fp-hex::before{ content:"SHA-256 // "; color:var(--cyan); font-weight:600; }
+  .codec-row{
+    display:flex; align-items:center; gap:12px;
+    margin:.75rem 0 .35rem; flex-wrap:wrap;
+  }
   .codec-row label{ margin:0; white-space:nowrap; }
-  .codec-row select{ flex:1; width:auto; min-width:0; }
-  details{ border-top:1px solid var(--line); margin-top:14px; padding-top:10px; }
-  summary{ cursor:pointer; font-weight:600; font-size:.9rem; padding:6px 0; }
-  footer{ color:var(--muted); font-size:.75rem; text-align:center; margin-top:28px; }
-  .ctx-banner{ background:var(--errbg); color:var(--danger); border-radius:var(--radius);
-    padding:14px 16px; margin:14px 0; font-size:.9rem; }
-  .rt-banner{ background:var(--warnbg); color:var(--warn); border:1px solid var(--warn);
-    border-radius:var(--radius); padding:14px 16px; margin:14px 0; font-size:.9rem; }
-  .help ul{ margin:.4rem 0 .8rem; padding-left:1.2rem; }
-  .help li{ margin:.3rem 0; }
-  .help .ok{ color:var(--ok); }
-  .help .no{ color:var(--danger); }
-  .help code, .help kbd{ font:13px ui-monospace,monospace; background:var(--bg); border:1px solid var(--line);
-    border-radius:6px; padding:1px 5px; }
-  #add-contact-det{ margin-top:4px; padding-top:10px; }
+  .codec-row select{ flex:1 1 220px; width:auto; min-width:0; }
+  details{ border-top:1px solid var(--line); margin-top:16px; padding-top:10px; }
+  summary{
+    cursor:pointer; font:700 .78rem/1.3 var(--font-sans);
+    text-transform:uppercase; letter-spacing:.06em;
+    padding:6px 0; list-style:none;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  summary::-webkit-details-marker{ display:none; }
+  summary::after{
+    content:"+"; font:400 1.1rem/1 var(--font-mono); color:var(--cyan);
+  }
+  details[open] > summary::after{ content:"−"; }
+  footer{
+    color:var(--muted); font:500 .72rem/1.5 var(--font-mono);
+    letter-spacing:.03em; text-transform:uppercase;
+    border-top:1px solid var(--line);
+    padding:14px 16px 0; margin-top:20px;
+    display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px 16px;
+  }
+  footer a{
+    color:var(--cyan); text-decoration:none; font-weight:600;
+    border-bottom:1px solid transparent;
+  }
+  footer a:hover{ border-bottom-color:var(--cyan-bright); }
+  .ctx-banner{
+    background:var(--errbg); color:var(--danger);
+    border:1px solid var(--danger); border-left-width:4px;
+    padding:14px 16px; margin:12px auto; font-size:.88rem;
+  }
+  .rt-banner{
+    background:var(--warnbg); color:var(--warn);
+    border:1px solid var(--warn); border-left-width:4px;
+    padding:14px 16px; margin:12px auto; font-size:.88rem;
+  }
+  .help ul{ margin:.2rem 0; padding-left:0; list-style:none; }
+  .help li{
+    position:relative; padding-left:1.45rem;
+    margin:.55rem 0; font-size:.88rem; line-height:1.55;
+  }
+  .help li:first-child{ margin-top:0; }
+  .help li::before{
+    content:"—"; position:absolute; left:0; top:0;
+    font-family:var(--font-mono); font-weight:700; color:var(--cyan);
+  }
+  .help li.ok::before{ content:"+"; color:var(--ok); }
+  .help li.no::before{ content:"×"; color:var(--danger); }
+  .help code, .help kbd{
+    font:12.5px var(--font-mono); background:var(--surface);
+    border:1px solid var(--line); padding:1px 5px;
+  }
+  #add-contact-det{ margin-top:12px; padding-top:10px; }
   .contact-actions{ display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:8px; }
-  label.chk{ display:flex; align-items:center; gap:8px; color:var(--ink); margin:.6rem 0; cursor:pointer; }
-  label.chk input[type=checkbox]{ width:18px; height:18px; margin:0; accent-color:var(--danger); }
+  label.chk{
+    display:flex; align-items:center; gap:8px;
+    color:var(--ink); font-size:.86rem; font-weight:500;
+    text-transform:none; letter-spacing:0;
+    margin:.7rem 0; cursor:pointer;
+  }
+  label.chk input[type=checkbox]{ width:17px; height:17px; margin:0; accent-color:var(--danger); }
+  #env-out, #plain-out{ margin-top:.75rem; }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>ecdh.html</h1>
-  <p class="sub">Emergency encrypted text — X25519 &rarr; HKDF-SHA-256 &rarr; AES-256-GCM · offline-capable · zero dependencies</p>
+  <div class="masthead">
+    <h1>ecdh.html</h1>
+    <p class="sub">Emergency encrypted text — X25519 &rarr; HKDF-SHA-256 &rarr; AES-256-GCM · offline-capable · zero dependencies</p>
+  </div>
+  <button id="btn-theme" class="theme-btn" type="button" aria-label="Switch color theme">◑ Dark</button>
 </header>
 
 <div id="ctx-warn" class="ctx-banner" hidden>
@@ -129,69 +379,87 @@
 <section id="sec-setup">
   <div id="setup-none">
     <div class="card">
-      <h2>Create your keypair</h2>
-      <p class="hint">
-        The private key is generated on this device and stored <b>only</b> in
-        passphrase-encrypted form. It never leaves the browser unencrypted.
-        Losing the passphrase = losing every message ever sent to this key —
-        store it somewhere survivable.
-      </p>
-      <label for="gen-pass">Passphrase (4+ random words recommended)</label>
-      <input type="password" id="gen-pass" autocomplete="new-password">
-      <label for="gen-pass2">Repeat passphrase</label>
-      <input type="password" id="gen-pass2" autocomplete="new-password">
-      <div id="gen-warn" class="warn" hidden>Passphrase looks short — brute-forcing the stored key costs less than you think.</div>
-      <button id="btn-generate" class="primary" type="button">Generate keypair</button>
-      <div id="gen-err" class="err" hidden></div>
+      <div class="card-meta">
+        <h2>Create your keypair</h2>
+        <p class="hint">
+          The private key is generated on this device and stored <b>only</b> in
+          passphrase-encrypted form. It never leaves the browser unencrypted.
+          Losing the passphrase = losing every message ever sent to this key —
+          store it somewhere survivable.
+        </p>
+      </div>
+      <div class="card-body">
+        <label for="gen-pass">Passphrase (4+ random words recommended)</label>
+        <input type="password" id="gen-pass" autocomplete="new-password">
+        <label for="gen-pass2">Repeat passphrase</label>
+        <input type="password" id="gen-pass2" autocomplete="new-password">
+        <div id="gen-warn" class="warn" hidden>Passphrase looks short — brute-forcing the stored key costs less than you think.</div>
+        <button id="btn-generate" class="primary" type="button">Generate keypair</button>
+        <div id="gen-err" class="err" hidden></div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Restore from backup</h2>
-      <p class="hint">Paste the exported JSON backup, or open the file below. The record itself is passphrase-encrypted; the passphrase is asked here to verify it.</p>
-      <textarea id="imp-json" rows="5" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
-      <input type="file" id="imp-file" accept=".json,application/json">
-      <label for="imp-pass">Passphrase</label>
-      <input type="password" id="imp-pass" autocomplete="off">
-      <button id="btn-import" type="button">Restore key</button>
-      <div id="imp-err" class="err" hidden></div>
+      <div class="card-meta">
+        <h2>Restore from backup</h2>
+        <p class="hint">Paste the exported JSON backup, or open the file below. The record itself is passphrase-encrypted; the passphrase is asked here to verify it.</p>
+      </div>
+      <div class="card-body">
+        <textarea id="imp-json" rows="5" placeholder='{"v":1,"type":"x25519-private",...}'></textarea>
+        <input type="file" id="imp-file" accept=".json,application/json">
+        <label for="imp-pass">Passphrase</label>
+        <input type="password" id="imp-pass" autocomplete="off">
+        <button id="btn-import" type="button">Restore key</button>
+        <div id="imp-err" class="err" hidden></div>
+      </div>
     </div>
   </div>
 
   <div id="setup-have" hidden>
     <div class="card">
-      <h2>Your identity</h2>
-      <label for="pubout">Public key (hex) — share freely; friends add it as a contact</label>
-      <textarea id="pubout" rows="2" readonly></textarea>
-      <button id="btn-copy-pub" type="button">Copy public key</button>
-      <label>Fingerprint — read over a voice call</label>
-      <div id="fp-emoji" class="fp-emoji"></div>
-      <div id="fp-hex" class="fp-hex"></div>
-      <p class="hint">Your contact checks these 12 emoji against the fingerprint shown for you in their contacts. Never skip this step — it is the only thing standing between you and a substituted key.</p>
+      <div class="card-meta">
+        <h2>Your identity</h2>
+        <p class="hint">Your contact checks these 12 emoji against the fingerprint shown for you in their contacts. Never skip this step — it is the only thing standing between you and a substituted key.</p>
+      </div>
+      <div class="card-body">
+        <label for="pubout">Public key (hex) — share freely; friends add it as a contact</label>
+        <textarea id="pubout" rows="2" readonly></textarea>
+        <button id="btn-copy-pub" type="button">Copy public key</button>
+        <label>Fingerprint — read over a voice call</label>
+        <div class="fp-readout">
+          <div id="fp-emoji" class="fp-emoji"></div>
+          <div id="fp-hex" class="fp-hex"></div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Backup &amp; maintenance</h2>
-      <p class="hint">Export is already passphrase-encrypted — safe to keep in cloud storage or email. Apps that grab the file get noise. (To export or import contacts, use the Encrypt tab.)</p>
-      <button id="btn-export" class="primary" type="button">Download backup (.json)</button>
-      <button id="btn-copy-backup" type="button">Copy backup JSON</button>
-      <details>
-        <summary>Change passphrase</summary>
-        <label for="ch-old">Current passphrase</label>
-        <input type="password" id="ch-old" autocomplete="off">
-        <label for="ch-new">New passphrase</label>
-        <input type="password" id="ch-new" autocomplete="new-password">
-        <label for="ch-new2">Repeat new passphrase</label>
-        <input type="password" id="ch-new2" autocomplete="new-password">
-        <button id="btn-chpass" type="button">Change passphrase</button>
-        <div id="ch-err" class="err" hidden></div>
-      </details>
-      <details>
-        <summary>Danger zone</summary>
-        <p class="hint">Wiping destroys the private key on this device. Messages encrypted to it become <b>permanently unreadable</b> (unless you restore a backup). Export first.</p>
-        <label class="chk"><input type="checkbox" id="wipe-contacts"> Also wipe all saved contacts</label>
-        <button id="btn-wipe" class="danger" type="button">Wipe key from this device</button>
-        <div id="wipe-err" class="err" hidden></div>
-      </details>
+      <div class="card-meta">
+        <h2>Backup &amp; maintenance</h2>
+        <p class="hint">Export is already passphrase-encrypted — safe to keep in cloud storage or email. Apps that grab the file get noise. (To export or import contacts, use the Encrypt tab.)</p>
+      </div>
+      <div class="card-body">
+        <button id="btn-export" class="primary" type="button">Download backup (.json)</button>
+        <button id="btn-copy-backup" type="button">Copy backup JSON</button>
+        <details>
+          <summary>Change passphrase</summary>
+          <label for="ch-old">Current passphrase</label>
+          <input type="password" id="ch-old" autocomplete="off">
+          <label for="ch-new">New passphrase</label>
+          <input type="password" id="ch-new" autocomplete="new-password">
+          <label for="ch-new2">Repeat new passphrase</label>
+          <input type="password" id="ch-new2" autocomplete="new-password">
+          <button id="btn-chpass" type="button">Change passphrase</button>
+          <div id="ch-err" class="err" hidden></div>
+        </details>
+        <details>
+          <summary>Danger zone</summary>
+          <p class="hint">Wiping destroys the private key on this device. Messages encrypted to it become <b>permanently unreadable</b> (unless you restore a backup). Export first.</p>
+          <label class="chk"><input type="checkbox" id="wipe-contacts"> Also wipe all saved contacts</label>
+          <button id="btn-wipe" class="danger" type="button">Wipe key from this device</button>
+          <div id="wipe-err" class="err" hidden></div>
+        </details>
+      </div>
     </div>
   </div>
 </section>
@@ -199,136 +467,176 @@
 <!-- ============ ENCRYPT ============ -->
 <section id="sec-encrypt" hidden>
   <div class="card">
-    <h2>Recipients</h2>
-    <select id="contact-sel" aria-label="Select recipient contact"></select>
-    <div class="contact-actions">
-      <button id="btn-del-contact" class="danger" type="button">Remove selected contact</button>
+    <div class="card-meta">
+      <h2>Recipients</h2>
+      <p class="hint">Select a verified contact to encrypt to, or register and verify a friend's public key.</p>
     </div>
-    <div id="sel-fp" hidden>
-      <label>Fingerprint of selected contact</label>
-      <div id="sel-fp-emoji" class="fp-emoji"></div>
-      <div id="sel-fp-hex" class="fp-hex"></div>
-    </div>
-    <details id="add-contact-det">
-      <summary>Add a contact</summary>
-      <label for="ct-name">Name</label>
-      <input type="text" id="ct-name" autocomplete="off" placeholder="e.g. Alice">
-      <label for="ct-pub">Their public key (hex)</label>
-      <textarea id="ct-pub" rows="2" placeholder="64 hex chars (32-byte public key)"></textarea>
-      <div id="ct-fp" hidden>
-        <div id="ct-fp-emoji" class="fp-emoji"></div>
-        <div id="ct-fp-hex" class="fp-hex"></div>
-        <p class="warn">Verify these 12 emoji over a voice call before trusting this contact.</p>
+    <div class="card-body">
+      <select id="contact-sel" aria-label="Select recipient contact"></select>
+      <div class="contact-actions">
+        <button id="btn-del-contact" class="danger" type="button">Remove selected contact</button>
       </div>
-      <div id="ct-wait" class="hint" hidden>Waiting for a valid public key…</div>
-      <button id="btn-add-contact" class="primary" type="button">Add contact</button>
-      <div id="ct-err" class="err" hidden></div>
-    </details>
-    <details id="contacts-io-det">
-      <summary>Export / import contacts</summary>
-      <p class="hint">Contacts export as an unencrypted JSON array of <code>{"name", "pub"}</code>. If you restore contacts from an untrusted place, re-verify their 12-emoji fingerprints.</p>
-      <button id="btn-export-contacts" class="primary" type="button">Download contacts (.json)</button>
-      <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
-      <label for="imp-contacts-json">Import contacts (JSON array)</label>
-      <textarea id="imp-contacts-json" rows="4" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
-      <input type="file" id="imp-contacts-file" accept=".json,application/json">
-      <button id="btn-import-contacts" type="button">Import contacts</button>
-      <div id="imp-contacts-err" class="err" hidden></div>
-    </details>
+      <div id="sel-fp" hidden>
+        <label>Fingerprint of selected contact</label>
+        <div class="fp-readout">
+          <div id="sel-fp-emoji" class="fp-emoji"></div>
+          <div id="sel-fp-hex" class="fp-hex"></div>
+        </div>
+      </div>
+      <details id="add-contact-det">
+        <summary>Add a contact</summary>
+        <label for="ct-name">Name</label>
+        <input type="text" id="ct-name" autocomplete="off" placeholder="e.g. Alice">
+        <label for="ct-pub">Their public key (hex)</label>
+        <textarea id="ct-pub" rows="2" placeholder="64 hex chars (32-byte public key)"></textarea>
+        <div id="ct-fp" hidden>
+          <div class="fp-readout">
+            <div id="ct-fp-emoji" class="fp-emoji"></div>
+            <div id="ct-fp-hex" class="fp-hex"></div>
+          </div>
+          <p class="warn">Verify these 12 emoji over a voice call before trusting this contact.</p>
+        </div>
+        <div id="ct-wait" class="hint" hidden>Waiting for a valid public key…</div>
+        <button id="btn-add-contact" class="primary" type="button">Add contact</button>
+        <div id="ct-err" class="err" hidden></div>
+      </details>
+      <details id="contacts-io-det">
+        <summary>Export / import contacts</summary>
+        <p class="hint">Contacts export as an unencrypted JSON array of <code>{"name", "pub"}</code>. If you restore contacts from an untrusted place, re-verify their 12-emoji fingerprints.</p>
+        <button id="btn-export-contacts" class="primary" type="button">Download contacts (.json)</button>
+        <button id="btn-copy-contacts" type="button">Copy contacts JSON</button>
+        <label for="imp-contacts-json">Import contacts (JSON array)</label>
+        <textarea id="imp-contacts-json" rows="4" placeholder='[{"name":"Alice","pub":"..."}]'></textarea>
+        <input type="file" id="imp-contacts-file" accept=".json,application/json">
+        <button id="btn-import-contacts" type="button">Import contacts</button>
+        <div id="imp-contacts-err" class="err" hidden></div>
+      </details>
+    </div>
   </div>
 
   <div class="card">
-    <h2>Compose</h2>
-    <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
-    <textarea id="msg" rows="7" placeholder="Message to encrypt…"></textarea>
-    <div class="codec-row">
-      <label for="codec-sel">Output format</label>
-      <select id="codec-sel" aria-label="Envelope text encoding">
-        <option value="賒" selected>CJK base4096 (賒) — dense, reads as classical text</option>
-        <option value="A">Z85 (A) — compact ASCII</option>
-      </select>
+    <div class="card-meta">
+      <h2>Compose</h2>
+      <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
     </div>
-    <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
-    <textarea id="env-out" rows="4" readonly hidden></textarea>
-    <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
-    <button id="btn-clear-msg" type="button" hidden>Clear</button>
-    <div id="enc-err" class="err" hidden></div>
+    <div class="card-body">
+      <textarea id="msg" rows="7" placeholder="Message to encrypt…"></textarea>
+      <div class="codec-row">
+        <label for="codec-sel">Output format</label>
+        <select id="codec-sel" aria-label="Envelope text encoding">
+          <option value="賒" selected>CJK base4096 (賒) — dense, reads as classical text</option>
+          <option value="A">Z85 (A) — compact ASCII</option>
+        </select>
+      </div>
+      <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
+      <textarea id="env-out" rows="4" readonly hidden></textarea>
+      <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
+      <button id="btn-clear-msg" type="button" hidden>Clear</button>
+      <div id="enc-err" class="err" hidden></div>
+    </div>
   </div>
 </section>
 
 <!-- ============ DECRYPT ============ -->
 <section id="sec-decrypt" hidden>
   <div class="card">
-    <h2>Decrypt a message</h2>
-    <p class="hint">Paste the envelope, enter the passphrase of your stored key. Decrypted text is shown, never stored — copy or clear it.</p>
-    <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
-    <textarea id="env-in" rows="4" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
-    <label for="dec-pass">Passphrase</label>
-    <input type="password" id="dec-pass" autocomplete="off">
-    <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
-    <div id="dec-err" class="err" hidden></div>
-    <textarea id="plain-out" rows="7" readonly hidden></textarea>
-    <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
-    <button id="btn-clear-plain" type="button" hidden>Clear</button>
+    <div class="card-meta">
+      <h2>Decrypt a message</h2>
+      <p class="hint">Paste the envelope, enter the passphrase of your stored key. Decrypted text is shown, never stored — copy or clear it.</p>
+    </div>
+    <div class="card-body">
+      <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
+      <textarea id="env-in" rows="4" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
+      <label for="dec-pass">Passphrase</label>
+      <input type="password" id="dec-pass" autocomplete="off">
+      <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
+      <div id="dec-err" class="err" hidden></div>
+      <textarea id="plain-out" rows="7" readonly hidden></textarea>
+      <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
+      <button id="btn-clear-plain" type="button" hidden>Clear</button>
+    </div>
   </div>
 </section>
 
 <!-- ============ HELP ============ -->
 <section id="sec-help" class="help" hidden>
   <div class="card">
-    <h2>What this is</h2>
-    <p class="hint">A static page for emergency encrypted text (X25519 ECIES + AES-256-GCM). You host it; friends exchange tagged envelopes (CJK base4096 or Z85) over any channel — tapped, monitored, hostile. The channel just carries opaque blobs.</p>
-    <p class="hint">Full protocol spec and the pinned threat model: see <code>README.md</code> in the repo.</p>
+    <div class="card-meta">
+      <h2>What this is</h2>
+    </div>
+    <div class="card-body">
+      <p class="hint" style="margin-top:0">A static page for emergency encrypted text (X25519 ECIES + AES-256-GCM). You host it; friends exchange tagged envelopes (CJK base4096 or Z85) over any channel — tapped, monitored, hostile. The channel just carries opaque blobs.</p>
+      <p class="hint" style="margin-bottom:0">Full protocol spec and the pinned threat model: see <code>README.md</code> in the repo.</p>
+    </div>
   </div>
   <div class="card">
-    <h2>Protected</h2>
-    <ul>
-      <li class="ok">Message contents against tapped/monitored transport</li>
-      <li class="ok">Tampered or forged ciphertext — any modification fails decryption</li>
-      <li class="ok">Key-substitution attacks — if you do the fingerprint ceremony</li>
-      <li class="ok">Private key at rest — device storage and backup files are passphrase-wrapped (PBKDF2-SHA-256 800k + AES-GCM)</li>
-      <li class="ok">Availability — static files, works offline, a saved copy runs from <code>file://</code></li>
-    </ul>
+    <div class="card-meta">
+      <h2>Protected</h2>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li class="ok">Message contents against tapped/monitored transport</li>
+        <li class="ok">Tampered or forged ciphertext — any modification fails decryption</li>
+        <li class="ok">Key-substitution attacks — if you do the fingerprint ceremony</li>
+        <li class="ok">Private key at rest — device storage and backup files are passphrase-wrapped (PBKDF2-SHA-256 800k + AES-GCM)</li>
+        <li class="ok">Availability — static files, works offline, a saved copy runs from <code>file://</code></li>
+      </ul>
+    </div>
   </div>
   <div class="card">
-    <h2>Not protected (by design)</h2>
-    <ul>
-      <li class="no">Sender authentication — <b>anyone with your public key can send you a decryptable message</b>. Judge senders by the voice ceremony and message context</li>
-      <li class="no">Replay — an old but genuine message can be re-sent to you</li>
-      <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
-      <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code></li>
-      <li class="no">In-app browsers (WebViews), non-standard browsers, &amp; extensions — chat-app WebViews and extensions/userscripts (e.g. Tampermonkey, auto-translate, AI sidebars) can read the page DOM and steal passphrases or plaintext</li>
-      <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
-      <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
-      <li class="no">Forward secrecy against later key theft — history falls if the private key falls</li>
-      <li class="no">A forgotten passphrase — the key and all its messages are gone forever</li>
-    </ul>
+    <div class="card-meta">
+      <h2>Not protected (by design)</h2>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li class="no">Sender authentication — <b>anyone with your public key can send you a decryptable message</b>. Judge senders by the voice ceremony and message context</li>
+        <li class="no">Replay — an old but genuine message can be re-sent to you</li>
+        <li class="no">Metadata &amp; plaintext length — blobs are visibly crypto; who talks to whom, when, and the exact UTF-8 byte length of the plaintext (no padding) are visible</li>
+        <li class="no">Plaintext contacts &amp; public keys at rest — your public key, saved contact names/keys, and last selected contact are stored unencrypted in <code>localStorage</code></li>
+        <li class="no">In-app browsers (WebViews), non-standard browsers, &amp; extensions — chat-app WebViews and extensions/userscripts (e.g. Tampermonkey, auto-translate, AI sidebars) can read the page DOM and steal passphrases or plaintext</li>
+        <li class="no">Cloud keyboards (IMEs) &amp; clipboard managers — third-party keyboards or OS/cloud clipboard history can capture what you type or copy</li>
+        <li class="no">A compromised device while you use the tool (keyloggers beat any passphrase)</li>
+        <li class="no">Forward secrecy against later key theft — history falls if the private key falls</li>
+        <li class="no">A forgotten passphrase — the key and all its messages are gone forever</li>
+      </ul>
+    </div>
   </div>
   <div class="card">
-    <h2>The voice ceremony</h2>
-    <ul>
-      <li>Call each other on a hard-to-tamper channel (voice). Agree: we use this system, for what, around when.</li>
-      <li>Each reads the <b>12 emoji</b> under their own public key; the other checks them against the fingerprint shown for that contact.</li>
-      <li>Do it in both directions. 12 emoji ≈ 72 bits — has never been feasible to fake for anyone in scope.</li>
-      <li>Treat unexpected blobs outside agreed windows with suspicion.</li>
-    </ul>
+    <div class="card-meta">
+      <h2>The voice ceremony</h2>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li>Call each other on a hard-to-tamper channel (voice). Agree: we use this system, for what, around when.</li>
+        <li>Each reads the <b>12 emoji</b> under their own public key; the other checks them against the fingerprint shown for that contact.</li>
+        <li>Do it in both directions. 12 emoji ≈ 72 bits — has never been feasible to fake for anyone in scope.</li>
+        <li>Treat unexpected blobs outside agreed windows with suspicion.</li>
+      </ul>
+    </div>
   </div>
   <div class="card">
-    <h2>Emergency habits</h2>
-    <ul>
-      <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML).</li>
-      <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
-      <li>Always open this page in standalone Firefox, Chrome, Edge, or Safari — <b>never</b> inside a chat app's built-in browser/WebView — and disable browser extensions (Tampermonkey, translation plugins, AI sidebars) on this page.</li>
-      <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
-      <li>Never paste plaintext or the private key into any chat. Only envelopes and public keys.</li>
-      <li>If adversaries upgrade to targeted nation-state: stop, use Signal/GPG/in person instead.</li>
-    </ul>
+    <div class="card-meta">
+      <h2>Emergency habits</h2>
+    </div>
+    <div class="card-body">
+      <ul>
+        <li>Download the raw <code>index.html</code> <b>and</b> <code>crypto.js</code> files from the repository into the same folder offline before you need them (avoid browser "Save Page As", which can break <code>crypto.js</code> or bake live screen state into the HTML).</li>
+        <li>Export the passphrase-encrypted key backup (and optionally your contact list) and keep it somewhere survivable.</li>
+        <li>Always open this page in standalone Firefox, Chrome, Edge, or Safari — <b>never</b> inside a chat app's built-in browser/WebView — and disable browser extensions (Tampermonkey, translation plugins, AI sidebars) on this page.</li>
+        <li>Use your OS's built-in offline keyboard, and prefer reading decrypted messages on screen rather than copying plaintext to the clipboard.</li>
+        <li>Never paste plaintext or the private key into any chat. Only envelopes and public keys.</li>
+        <li>If adversaries upgrade to targeted nation-state: stop, use Signal/GPG/in person instead.</li>
+      </ul>
+    </div>
   </div>
 </section>
 
 </main>
 
-<footer>ecdh.html v1 · X25519 + HKDF-SHA-256 + AES-256-GCM · offline-capable · no external assets</footer>
+<footer>
+  <span>ecdh.html v1 · X25519 + HKDF-SHA-256 + AES-256-GCM · offline-capable · no external assets</span>
+  <a href="https://github.com/hurui200320/ecdh.html" target="_blank" rel="noopener noreferrer">GitHub &nearr;</a>
+</footer>
 
 <script src="crypto.js"></script>
 <script>
@@ -384,6 +692,40 @@ function hideErr(el){ el.hidden = true; el.textContent = ""; }
 const LS_KEY = "ecdh.key.v1";
 const LS_CONTACTS = "ecdh.contacts.v1";
 const LS_LAST = "ecdh.lastcontact.v1";
+const LS_THEME = "ecdh.theme.v1";
+
+/* ---------- theme ---------- */
+const DARK_MQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function currentTheme(){
+  const explicit = document.documentElement.getAttribute("data-theme");
+  if (explicit === "dark" || explicit === "light") return explicit;
+  return DARK_MQ && DARK_MQ.matches ? "dark" : "light";
+}
+function applyTheme(t){
+  if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  else document.documentElement.removeAttribute("data-theme");
+  const eff = currentTheme();
+  const btn = $("#btn-theme");
+  if (btn){
+    btn.textContent = eff === "dark" ? "☀ Light" : "◑ Dark";
+    btn.setAttribute("aria-label", eff === "dark" ? "Switch to light mode" : "Switch to dark mode");
+  }
+}
+(function initTheme(){
+  let saved = null;
+  try { saved = localStorage.getItem(LS_THEME); } catch { saved = null; }
+  applyTheme(saved === "dark" || saved === "light" ? saved : null);
+  if (DARK_MQ && DARK_MQ.addEventListener){
+    DARK_MQ.addEventListener("change", () => {
+      if (!document.documentElement.hasAttribute("data-theme")) applyTheme(null);
+    });
+  }
+})();
+$("#btn-theme").addEventListener("click", () => {
+  const next = currentTheme() === "dark" ? "light" : "dark";
+  try { localStorage.setItem(LS_THEME, next); } catch { /* non-fatal */ }
+  applyTheme(next);
+});
 
 let RECORD = null;    // wrapper record (object) or null
 let OWN_PUB = null;   // Uint8Array(32)
