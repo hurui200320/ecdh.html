@@ -64,6 +64,7 @@
     }
   }
   *{ box-sizing:border-box; }
+  [hidden]{ display:none !important; }
   html,body{ margin:0; padding:0; }
   body{
     background:var(--bg); color:var(--ink);
@@ -85,12 +86,11 @@
     font-size:1.65rem; font-weight:700; margin:0;
     letter-spacing:-.03em; line-height:1.1;
   }
-  h1::after{
-    content:"v1";
+  h1 .ver{
     font:600 .7rem/1 var(--font-mono);
     color:var(--cyan);
     border:1px solid var(--cyan-bright);
-    padding:2px 5px; margin-left:8px; vertical-align:middle; letter-spacing:.05em;
+    padding:2px 5px; margin-left:4px; vertical-align:middle; letter-spacing:.05em;
   }
   .sub{
     color:var(--muted); font:500 .76rem/1.4 var(--font-mono);
@@ -372,7 +372,7 @@
 
 <header>
   <div class="masthead">
-    <h1>ecdh.html</h1>
+    <h1>ecdh.html <span class="ver">v1</span></h1>
     <p class="sub">Emergency encrypted text — X25519 &rarr; HKDF-SHA-256 &rarr; AES-256-GCM · offline-capable · zero dependencies</p>
   </div>
   <button id="btn-theme" class="theme-btn" type="button" aria-label="Switch color theme">◑ Dark</button>
@@ -474,6 +474,7 @@
           <input type="password" id="ch-new" autocomplete="new-password">
           <label for="ch-new2">Repeat new passphrase</label>
           <input type="password" id="ch-new2" autocomplete="new-password">
+          <div id="ch-warn" class="warn" hidden>Passphrase looks short — brute-forcing the stored key costs less than you think.</div>
           <button id="btn-chpass" type="button">Change passphrase</button>
           <div id="ch-err" class="err" hidden></div>
         </details>
@@ -577,7 +578,7 @@
       <input type="password" id="dec-pass" autocomplete="off">
       <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
       <div id="dec-err" class="err" hidden></div>
-      <textarea id="plain-out" rows="7" readonly hidden></textarea>
+      <textarea id="plain-out" rows="7" placeholder="(empty message)" readonly hidden></textarea>
       <button id="btn-copy-plain" type="button" hidden>Copy plaintext</button>
       <button id="btn-clear-plain" type="button" hidden>Clear</button>
     </div>
@@ -708,9 +709,9 @@ async function copyText(t, btn){
     try {
       const ta = document.createElement("textarea");
       ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
-      document.body.appendChild(ta); ta.select();
-      ok = document.execCommand("copy");
-      ta.remove();
+      document.body.appendChild(ta);
+      try { ta.select(); ok = document.execCommand("copy"); }
+      finally { ta.remove(); }
     } catch { ok = false; }
   }
   flash(btn, ok ? "Copied ✓" : "Copy failed — select & copy manually");
@@ -793,10 +794,10 @@ function showTab(name){
   for (const b of $$("#tabs .tabbtn")) b.setAttribute("aria-selected", b.dataset.tab === name ? "true" : "false");
   for (const id of ["setup", "encrypt", "decrypt", "help"])
     $("#sec-" + id).hidden = (id !== name);
-  if (name === "setup") renderSetup();
-  if (name === "encrypt") renderContacts();
-  if (name === "decrypt") renderDecryptPre();
   window.scrollTo(0, 0);
+  if (name === "setup") return renderSetup();
+  if (name === "encrypt") return renderContacts();
+  if (name === "decrypt") renderDecryptPre();
 }
 
 function renderFp(emojiSel, hexSel, fp){
@@ -828,31 +829,35 @@ async function renderContacts(){
   $("#btn-export-contacts").disabled = !has;
   $("#btn-copy-contacts").disabled = !has;
   if (has){
-    let lastPub = LAST_PUB;
-    try { lastPub = localStorage.getItem(LS_LAST) || LAST_PUB; } catch { /* non-fatal */ }
-    let idx = CONTACTS.findIndex(c => c.pub === lastPub);
+    let idx = CONTACTS.findIndex(c => c.pub === LAST_PUB);
     if (idx < 0) idx = 0;
     LAST_PUB = CONTACTS[idx].pub;
-    sel.innerHTML = CONTACTS.map((c, i) =>
-      `<option value="${i}"${i === idx ? " selected" : ""}>${esc(c.name)}</option>`).join("");
+    const nameCounts = new Map();
+    for (const c of CONTACTS) nameCounts.set(c.name, (nameCounts.get(c.name) || 0) + 1);
+    sel.innerHTML = CONTACTS.map((c, i) => {
+      const label = nameCounts.get(c.name) > 1 ? `${c.name} (${c.pub.slice(0, 8)}…)` : c.name;
+      return `<option value="${i}"${i === idx ? " selected" : ""}>${esc(label)}</option>`;
+    }).join("");
     $("#btn-del-contact").disabled = false;
     $("#btn-encrypt").disabled = false;
   } else {
+    LAST_PUB = null;
     sel.innerHTML = `<option value="">— no contacts yet —</option>`;
     $("#btn-del-contact").disabled = true;
     $("#btn-encrypt").disabled = true;
     $("#sel-fp").hidden = true;
   }
-  showSelFp();
+  await showSelFp();
 }
 
 async function showSelFp(){
   const sel = $("#contact-sel");
-  const i = sel.value | 0;
-  const c = CONTACTS[i];
+  const idx = Number.parseInt(sel.value, 10);
+  const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (!c){ $("#sel-fp").hidden = true; return; }
   try {
     const fp = await fpOf(pubDec(c.pub));
+    if (CONTACTS[Number.parseInt(sel.value, 10)] !== c) return;
     $("#sel-fp").hidden = false;
     renderFp("#sel-fp-emoji", "#sel-fp-hex", fp);
   } catch { $("#sel-fp").hidden = true; }
@@ -969,6 +974,11 @@ $("#btn-export").addEventListener("click", () => {
 });
 $("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.target));
 
+$("#ch-new").addEventListener("input", (e) => {
+  const v = e.target.value;
+  $("#ch-warn").hidden = v.length >= 12 || v.length === 0;
+});
+
 $("#btn-chpass").addEventListener("click", async (e) => {
   const err = $("#ch-err"); hideErr(err); hideErr($("#save-warn"));
   const btn = e.target;
@@ -988,6 +998,7 @@ $("#btn-chpass").addEventListener("click", async (e) => {
       salt: b64enc(w.salt), iv: b64enc(w.iv), ct: b64enc(w.ct),
     };
     $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = "";
+    $("#ch-warn").hidden = true;
     try { saveRecord(); }
     catch (se){ showErr($("#save-warn"), se.message); }
     ok = true;
@@ -1038,7 +1049,7 @@ $("#btn-wipe").addEventListener("click", async (e) => {
   $("#fp-emoji").innerHTML = ""; $("#fp-hex").textContent = "";
   $("#gen-pass").value = $("#gen-pass2").value = ""; $("#gen-warn").hidden = true; hideErr($("#gen-err"));
   $("#imp-json").value = ""; $("#imp-file").value = ""; $("#imp-pass").value = ""; hideErr($("#imp-err"));
-  $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = ""; hideErr($("#ch-err"));
+  $("#ch-old").value = $("#ch-new").value = $("#ch-new2").value = ""; $("#ch-warn").hidden = true; hideErr($("#ch-err"));
   clearPlain(); $("#env-in").value = ""; hideErr($("#dec-err"));
   clearMsg();
   if (wipeAll){
@@ -1071,9 +1082,11 @@ $("#ct-pub").addEventListener("input", () => {
     try {
       const pub = pubDec(v);
       const fp = await fpOf(pub);
+      if ($("#ct-pub").value.trim() !== v) return;
       $("#ct-fp").hidden = false;
       renderFp("#ct-fp-emoji", "#ct-fp-hex", fp);
     } catch {
+      if ($("#ct-pub").value.trim() !== v) return;
       $("#ct-wait").hidden = false;
     }
   }, 250);
@@ -1105,7 +1118,8 @@ $("#btn-add-contact").addEventListener("click", async (e) => {
 });
 
 $("#contact-sel").addEventListener("change", () => {
-  const c = CONTACTS[$("#contact-sel").value | 0];
+  const idx = Number.parseInt($("#contact-sel").value, 10);
+  const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (c){
     LAST_PUB = c.pub;
     try { localStorage.setItem(LS_LAST, c.pub); } catch { /* non-fatal */ }
@@ -1117,13 +1131,17 @@ $("#contact-sel").addEventListener("change", () => {
 
 $("#btn-del-contact").addEventListener("click", async () => {
   const sel = $("#contact-sel");
-  if (!CONTACTS.length) return;
+  const idx = Number.parseInt(sel.value, 10);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= CONTACTS.length) return;
   hideErr($("#contacts-warn"));
-  CONTACTS.splice(sel.value | 0, 1);
+  CONTACTS.splice(idx, 1);
   clearStaleEnv();
   await renderContacts();
-  try { saveContacts(); }
-  catch (ex){ showErr($("#contacts-warn"), ex.message || "Could not persist contacts to browser storage."); }
+  try {
+    saveContacts();
+    if (LAST_PUB) localStorage.setItem(LS_LAST, LAST_PUB);
+    else localStorage.removeItem(LS_LAST);
+  } catch (ex){ showErr($("#contacts-warn"), ex.message || "Could not persist contacts to browser storage."); }
 });
 
 $("#btn-export-contacts").addEventListener("click", () => {
@@ -1172,8 +1190,10 @@ $("#btn-import-contacts").addEventListener("click", async (e) => {
 $("#btn-encrypt").addEventListener("click", async (e) => {
   const err = $("#enc-err"); hideErr(err);
   const btn = e.target;
-  const c = CONTACTS[$("#contact-sel").value | 0];
+  const idx = Number.parseInt($("#contact-sel").value, 10);
+  const c = Number.isInteger(idx) ? CONTACTS[idx] : null;
   if (!c) return showErr(err, "Pick a contact first.");
+  if (!$("#msg").value) return showErr(err, "Enter a message to encrypt.");
   let pub;
   try { pub = pubDec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
   $("#env-out").hidden = true;
@@ -1244,6 +1264,11 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
 $("#btn-copy-plain").addEventListener("click", (b) => copyText($("#plain-out").value, b.target));
 $("#btn-clear-plain").addEventListener("click", clearPlain);
 
+for (const [inp, btn] of [["#gen-pass2", "#btn-generate"], ["#imp-pass", "#btn-import"], ["#ch-new2", "#btn-chpass"], ["#dec-pass", "#btn-decrypt"]])
+  $(inp).addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !$(btn).disabled){ e.preventDefault(); $(btn).click(); }
+  });
+
 /* ---------- boot ---------- */
 for (const b of $$("#tabs .tabbtn"))
   b.addEventListener("click", () => showTab(b.dataset.tab));
@@ -1282,10 +1307,10 @@ for (const b of $$("#tabs .tabbtn"))
   }
   loadState();
 
-  await renderSetup();
-  renderContacts();
   renderDecryptPre();
-  $("#tabs .tabbtn" + (RECORD ? '[data-tab="encrypt"]' : '[data-tab="setup"]')).click();
+  if (RECORD) await renderSetup();
+  else await renderContacts();
+  await showTab(RECORD ? "encrypt" : "setup");
 
   // Offline support: never block the app on this. file:// copies don't use
   // (or need) the service worker; registration is fire-and-forget by design —

@@ -428,7 +428,7 @@ async function wrapScalar(pass, scalar, iter){
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, tagLength: 128 }, k, scalar));
   return { salt, iv, ct };
 }
-async function unwrapScalar(pass, rec){
+function parseRecord(rec){
   if (!rec || typeof rec !== "object" || rec.v !== 1 || rec.type !== "x25519-private")
     throw new Error("Not an ecdh.html v1 key record.");
   if (rec.kdf !== "PBKDF2-HMAC-SHA256" || rec.cipher !== "AES-256-GCM")
@@ -442,6 +442,10 @@ async function unwrapScalar(pass, rec){
   const iter = typeof rec.iter === "number" && Number.isFinite(rec.iter) ? Math.trunc(rec.iter) : 0;
   if (salt.length !== 16 || iv.length !== 12 || ct.length !== 48 || iter < 1 || iter > MAX_PBKDF2_ITER)
     throw new Error("Record is corrupted (bad field sizes).");
+  return { salt, iv, ct, iter };
+}
+async function unwrapScalar(pass, rec){
+  const { salt, iv, ct, iter } = parseRecord(rec);
   let pt;
   try {
     const k = await aesKeyFromPass(pass, salt, iter, ["decrypt"]);
@@ -453,12 +457,11 @@ async function unwrapScalar(pass, rec){
 
 /* Import-side validation: the spec requires the pub field, verified against
  * the private scalar. Returns the canonical record to store/export (extra
- * fields dropped, iter normalized to the integer actually used). */
+ * fields dropped, iter normalized to the integer actually used, base64 fields
+ * canonicalized). */
 async function recordFromImport(rec, scalar){
-  if (!rec || typeof rec !== "object") throw new Error("Not an ecdh.html v1 key record.");
+  const { salt, iv, ct, iter } = parseRecord(rec);
   if (typeof rec.pub !== "string") throw new Error("Record is missing the required 'pub' field.");
-  const iter = typeof rec.iter === "number" && Number.isFinite(rec.iter) ? Math.trunc(rec.iter) : 0;
-  if (iter < 1 || iter > MAX_PBKDF2_ITER) throw new Error("Record is corrupted (bad field sizes).");
   const recPub = pubDec(rec.pub);   // hex; throws on anything else
   const derivedPub = await pubFromPriv(scalar);
   if (hex(recPub) !== hex(derivedPub))
@@ -466,7 +469,7 @@ async function recordFromImport(rec, scalar){
   return {
     v: 1, type: "x25519-private", pub: pubEnc(derivedPub),
     kdf: rec.kdf, iter, cipher: rec.cipher,
-    salt: rec.salt, iv: rec.iv, ct: rec.ct,
+    salt: b64enc(salt), iv: b64enc(iv), ct: b64enc(ct),
   };
 }
 
@@ -560,6 +563,8 @@ function checkRuntime(ua, globals){
     return { kind: "webview", label: "WeChat in-app WebView" };
   if (g.AlipayJSBridge)
     return { kind: "webview", label: "Alipay in-app WebView" };
+  if (g.TelegramWebviewProxy || g.TelegramWebview)
+    return { kind: "webview", label: "Telegram in-app WebView" };
   if (g.ReactNativeWebView)
     return { kind: "webview", label: "in-app WebView" };
   for (const [re, label] of WEBVIEW_RULES)

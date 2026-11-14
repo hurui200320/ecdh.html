@@ -183,6 +183,10 @@ async function makeRecord(priv, pub, pass, iter){
   // Strictness: bad lengths, stray PAD markers, non-canonical padding bits.
   assert.throws(() => b4096dec("圼"), /length/i,
     "odd digit count without a PAD marker is rejected");
+  assert.throws(() => b4096dec(B4096_PAD1), /length/i,
+    "lone PAD1 without a preceding digit is rejected");
+  assert.throws(() => b4096dec("圼" + B4096_PAD2), /length/i,
+    "1 digit before PAD2 (needs 2 digits) is rejected");
   assert.throws(() => b4096dec("圼賐圼嶖"), /alphabet/i,
     "a PAD marker inside the payload is not a digit");
   assert.throws(() => b4096dec(B4096_TABLE[17] + B4096_PAD1), /canonical/i,
@@ -275,6 +279,7 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 0 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: -100 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: true }), /bad field sizes/i);
+  await assert.rejects(unwrapScalar("x", { ...rec, iter: 100000001 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, iter: 4294967297 }), /bad field sizes/i);
   await assert.rejects(unwrapScalar("x", { ...rec, salt: 123 }), /bad base64/i);
   await assert.rejects(unwrapScalar("x", { ...rec, kdf: "PBKDF2-HMAC-SHA512" }), /unsupported KDF/i);
@@ -308,6 +313,12 @@ async function makeRecord(priv, pub, pass, iter){
   await assert.rejects(recordFromImport({ ...rec, pub: pubEnc(new Uint8Array(16)) }, scalar), /64 hex chars/);
   await assert.rejects(recordFromImport({ ...rec, pub: "!!!" }, scalar), /hex/i);
   await assert.rejects(recordFromImport(null, scalar), /Not an ecdh/i);
+  await assert.rejects(recordFromImport({ ...rec, v: 2 }, scalar), /Not an ecdh/i);
+  await assert.rejects(recordFromImport({ ...rec, kdf: "scrypt" }, scalar), /unsupported KDF/i);
+  const spacedRec = { ...rec, salt: " " + rec.salt + "\n", iv: " " + rec.iv };
+  const canonSpaced = await recordFromImport(spacedRec, scalar);
+  assert.strictEqual(canonSpaced.salt, rec.salt, "recordFromImport canonicalizes base64 salt");
+  assert.strictEqual(canonSpaced.iv, rec.iv, "recordFromImport canonicalizes base64 iv");
   const oddIter = await makeRecord(priv, pub, "odd", 1500);
   oddIter.iter = 1500.7;   // hand-edited record: importer must use/store the integer actually used
   const canonOdd = await recordFromImport(oddIter, await unwrapScalar("odd", oddIter));
@@ -348,6 +359,9 @@ async function makeRecord(priv, pub, pass, iter){
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (X11; Linux x86_64) Chrome/133.0.0.0", { WeixinJSBridge: {} }),
     { kind: "webview", label: "WeChat in-app WebView" }, "WeChat global bridge detected even if UA is spoofed");
+  assert.deepStrictEqual(
+    checkRuntime("Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1", { TelegramWebviewProxy: {} }),
+    { kind: "webview", label: "Telegram in-app WebView" }, "Telegram WebView global proxy detected");
   assert.deepStrictEqual(
     checkRuntime("Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/UQ1A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/133.0.0.0 Mobile Safari/537.36"),
     { kind: "webview", label: "Android in-app WebView" }, "generic Android WebView (; wv) detected");
