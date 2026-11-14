@@ -300,7 +300,7 @@ Test vector (32-byte all-zero public key):
 }
 ```
 
-- The wrapping key is derived via `PBKDF2-HMAC-SHA256(passphrase, salt, iter)`. Importers honor the `iter` value stored in the JSON record rather than hardcoding 800,000.
+- The wrapping key is derived via `PBKDF2-HMAC-SHA256(UTF-8(passphrase), salt, iter)` (using the raw UTF-8 bytes of the passphrase string without Unicode normalization). Importers honor the `iter` value stored in the JSON record rather than hardcoding 800,000.
 - The `pub` field is mandatory; on import, the decrypted private scalar is multiplied by the base point to verify that it matches `pub`.
 - `localStorage` keys used by the page:
   - `ecdh.key.v1` — the JSON record above (private scalar encrypted; `pub` in plaintext)
@@ -317,7 +317,7 @@ If you want to build a compatible desktop or Android tool using BouncyCastle / J
   - SPKI X25519 public key prefix: `302a300506032b656e032100 || raw32`
 - **X25519 agreement:** `new X25519PrivateKeyParameters(scalar, 0)` with `X25519Agreement` produces the identical 32-byte little-endian shared secret as Web Crypto's `deriveBits`. (Standard X25519 clamping is handled internally during scalar multiplication in all implementations.)
 - **HKDF:** `new HKDFBytesGenerator(new SHA256Digest())` initialized with `new HKDFParameters(ikm, salt, info)`, then `generateBytes(out, 0, 32)`.
-- **PBKDF2:** JCE `SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")` (256-bit key) or BouncyCastle `PKCS5S2ParametersGenerator(new SHA256Digest())`.
+- **PBKDF2:** JCE `SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")` (256-bit key) or BouncyCastle `PKCS5S2ParametersGenerator(new SHA256Digest())` initialized with `PBEParametersGenerator.PKCS5PasswordToUTF8Bytes(passphrase)` (not `PKCS5PasswordToBytes`, which truncates characters to 8 bits).
 - **AES-GCM:** JCE `Cipher.getInstance("AES/GCM/NoPadding")` with `new GCMParameterSpec(128, iv)` appends the 16-byte authentication tag to the end of the ciphertext, matching Web Crypto.
 
 #### Implementation and testing notes
@@ -326,7 +326,7 @@ If you want to build a compatible desktop or Android tool using BouncyCastle / J
 - **Browser end-to-end validation:** Tested in headless Chromium (Playwright) covering HTTP insecure-context warning banners, key generation, contact fingerprint previews, contact export/import, full Unicode encrypt/decrypt round-trips with line-wrapped envelopes, backup/wipe/restore flows (including optional contact wiping), and passphrase changes.
 - **Browser quirks handled in code:**
   1. *Non-blocking service worker registration:* Startup does not `await` `navigator.serviceWorker.register()`, preventing a slow or stuck service worker registration from delaying UI initialization.
-  2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are caught and normalized into explicit `"zero shared secret"` error messages.
+  2. *Consistent small-order public key errors:* Chromium throws a generic `OperationError` with an empty message when `deriveBits` encounters a low-order X25519 point (such as an all-zero public key), whereas Firefox returns 32 zero bytes. Both cases are caught and normalized into explicit invalid-key / zero-shared-secret error messages.
 
 ---
 

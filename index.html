@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'; object-src 'none'; frame-src 'none'; media-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="robots" content="noindex">
 <meta name="description" content="Emergency encrypted text: X25519 + HKDF-SHA-256 + AES-256-GCM. Self-contained, offline-capable, zero dependencies.">
 <meta name="theme-color" content="#090e17">
@@ -394,16 +394,16 @@
 </div>
 
 <div id="tabs" role="tablist" aria-label="Sections">
-  <button class="tabbtn" data-tab="setup" role="tab" type="button" aria-selected="true">Setup</button>
-  <button class="tabbtn" data-tab="encrypt" role="tab" type="button" aria-selected="false">Encrypt</button>
-  <button class="tabbtn" data-tab="decrypt" role="tab" type="button" aria-selected="false">Decrypt</button>
-  <button class="tabbtn" data-tab="help" role="tab" type="button" aria-selected="false">Help</button>
+  <button id="tab-setup" class="tabbtn" data-tab="setup" role="tab" aria-controls="sec-setup" type="button" aria-selected="true">Setup</button>
+  <button id="tab-encrypt" class="tabbtn" data-tab="encrypt" role="tab" aria-controls="sec-encrypt" type="button" aria-selected="false">Encrypt</button>
+  <button id="tab-decrypt" class="tabbtn" data-tab="decrypt" role="tab" aria-controls="sec-decrypt" type="button" aria-selected="false">Decrypt</button>
+  <button id="tab-help" class="tabbtn" data-tab="help" role="tab" aria-controls="sec-help" type="button" aria-selected="false">Help</button>
 </div>
 
 <main>
 
 <!-- ============ SETUP ============ -->
-<section id="sec-setup" role="tabpanel">
+<section id="sec-setup" role="tabpanel" aria-labelledby="tab-setup">
   <div id="setup-none">
     <div class="card">
       <div class="card-meta">
@@ -494,7 +494,7 @@
 </section>
 
 <!-- ============ ENCRYPT ============ -->
-<section id="sec-encrypt" role="tabpanel" hidden>
+<section id="sec-encrypt" role="tabpanel" aria-labelledby="tab-encrypt" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>Recipients</h2>
@@ -568,7 +568,7 @@
 </section>
 
 <!-- ============ DECRYPT ============ -->
-<section id="sec-decrypt" role="tabpanel" hidden>
+<section id="sec-decrypt" role="tabpanel" aria-labelledby="tab-decrypt" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>Decrypt a message</h2>
@@ -589,7 +589,7 @@
 </section>
 
 <!-- ============ HELP ============ -->
-<section id="sec-help" class="help" role="tabpanel" hidden>
+<section id="sec-help" class="help" role="tabpanel" aria-labelledby="tab-help" hidden>
   <div class="card">
     <div class="card-meta">
       <h2>What this is</h2>
@@ -792,11 +792,15 @@ function loadState(){
   try { RECORD = JSON.parse(localStorage.getItem(LS_KEY) || "null"); } catch { RECORD = null; }
   try { CONTACTS = JSON.parse(localStorage.getItem(LS_CONTACTS) || "[]"); } catch { CONTACTS = []; }
   try { LAST_PUB = localStorage.getItem(LS_LAST); } catch { LAST_PUB = null; }
-  CONTACTS = (Array.isArray(CONTACTS) ? CONTACTS : []).flatMap(c => {
-    if (!c || typeof c.name !== "string" || typeof c.pub !== "string") return [];
-    try { return [{ name: c.name.trim() || "friend", pub: pubEnc(pubDec(c.pub)) }]; }
-    catch { return []; }
-  });
+  const byPub = new Map();
+  for (const c of Array.isArray(CONTACTS) ? CONTACTS : []){
+    if (!c || typeof c.name !== "string" || typeof c.pub !== "string") continue;
+    try {
+      const pub = pubEnc(pubDec(c.pub));
+      byPub.set(pub, { name: c.name.trim() || "friend", pub });
+    } catch { /* skip corrupt entry */ }
+  }
+  CONTACTS = [...byPub.values()];
   if (RECORD && typeof RECORD.pub === "string"){
     try { parseRecord(RECORD); OWN_PUB = pubDec(RECORD.pub); }
     catch { RECORD = null; OWN_PUB = null; }
@@ -823,12 +827,15 @@ function renderFp(emojiSel, hexSel, fp){
 }
 
 async function renderSetup(){
-  const have = !!RECORD;
+  const rec = RECORD, pub = OWN_PUB ? OWN_PUB.slice() : null;
+  const have = !!(rec && pub);
   $("#setup-none").hidden = have;
   $("#setup-have").hidden = !have;
   if (have){
-    $("#pubout").value = pubEnc(OWN_PUB);
-    renderFp("#fp-emoji", "#fp-hex", await fpOf(OWN_PUB));
+    $("#pubout").value = pubEnc(pub);
+    const fp = await fpOf(pub);
+    if (RECORD !== rec) return;
+    renderFp("#fp-emoji", "#fp-hex", fp);
   }
 }
 
@@ -889,12 +896,16 @@ function clearMsg(){
   clearStaleEnv();
   hideErr($("#enc-err"));
 }
-function clearPlain(){
+function clearStalePlain(){
   $("#plain-out").value = "";
   $("#plain-out").hidden = true;
   $("#btn-copy-plain").hidden = true;
   $("#btn-clear-plain").hidden = true;
+}
+function clearPlain(){
+  clearStalePlain();
   $("#dec-pass").value = "";
+  hideErr($("#dec-err"));
 }
 
 /* ---------- setup handlers ---------- */
@@ -910,7 +921,8 @@ $("#btn-generate").addEventListener("click", async (e) => {
   if (!p1) return showErr(err, "Enter a passphrase — this is the only thing protecting the stored key.");
   if (p1 !== p2) return showErr(err, "Passphrases don't match.");
   clearFlash(btn);
-  btn.disabled = true; btn.textContent = "Generating…";
+  $("#btn-generate").disabled = true; $("#btn-import").disabled = true;
+  btn.textContent = "Generating…";
   let ok = false, priv = null;
   try {
     const kp = await genKeyPair();
@@ -934,7 +946,8 @@ $("#btn-generate").addEventListener("click", async (e) => {
   } catch (ex){ showErr(err, ex.message || "Generation failed."); }
   finally {
     if (priv) priv.fill(0);
-    btn.disabled = false; btn.textContent = "Generate keypair";
+    $("#btn-generate").disabled = false; $("#btn-import").disabled = false;
+    btn.textContent = "Generate keypair";
   }
   if (ok) flash(btn, "Generated ✓");
 });
@@ -952,7 +965,8 @@ $("#btn-import").addEventListener("click", async (e) => {
   const pass = $("#imp-pass").value;
   if (!pass) return showErr(err, "Enter the passphrase for this record.");
   clearFlash(btn);
-  btn.disabled = true; btn.textContent = "Restoring…";
+  $("#btn-generate").disabled = true; $("#btn-import").disabled = true;
+  btn.textContent = "Restoring…";
   let ok = false, scalar = null;
   try {
     parseRecord(rec);
@@ -970,7 +984,8 @@ $("#btn-import").addEventListener("click", async (e) => {
   } catch (ex){ showErr(err, ex.message || "Restore failed."); }
   finally {
     if (scalar) scalar.fill(0);
-    btn.disabled = false; btn.textContent = "Restore key";
+    $("#btn-generate").disabled = false; $("#btn-import").disabled = false;
+    btn.textContent = "Restore key";
   }
   if (ok) flash(btn, "Restored ✓");
 });
@@ -985,7 +1000,10 @@ $("#imp-file").addEventListener("change", async (e) => {
   catch { showErr(err, "Could not read the selected file."); }
 });
 
-$("#btn-copy-pub").addEventListener("click", (b) => copyText($("#pubout").value, b.currentTarget));
+$("#btn-copy-pub").addEventListener("click", (b) => {
+  if (!RECORD) return;
+  copyText($("#pubout").value, b.currentTarget);
+});
 
 $("#btn-export").addEventListener("click", () => {
   if (!RECORD) return;
@@ -997,7 +1015,10 @@ $("#btn-export").addEventListener("click", () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 });
-$("#btn-copy-backup").addEventListener("click", (b) => copyText(JSON.stringify(RECORD), b.currentTarget));
+$("#btn-copy-backup").addEventListener("click", (b) => {
+  if (!RECORD) return;
+  copyText(JSON.stringify(RECORD), b.currentTarget);
+});
 
 $("#ch-new").addEventListener("input", (e) => {
   const v = e.currentTarget.value;
@@ -1184,7 +1205,10 @@ $("#btn-export-contacts").addEventListener("click", () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 });
-$("#btn-copy-contacts").addEventListener("click", (b) => copyText(JSON.stringify(CONTACTS), b.currentTarget));
+$("#btn-copy-contacts").addEventListener("click", (b) => {
+  if (!CONTACTS.length) return;
+  copyText(JSON.stringify(CONTACTS), b.currentTarget);
+});
 
 $("#imp-contacts-file").addEventListener("change", async (e) => {
   const err = $("#imp-contacts-err"); hideErr(err);
@@ -1229,6 +1253,7 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   if (!$("#msg").value) return showErr(err, "Enter a message to encrypt.");
   let pub;
   try { pub = pubDec(c.pub); } catch { return showErr(err, "Saved contact key is corrupt — re-add it."); }
+  $("#env-out").value = "";
   $("#env-out").hidden = true;
   $("#btn-copy-env").hidden = true;
   $("#btn-clear-msg").hidden = true;
@@ -1263,7 +1288,11 @@ $("#msg").addEventListener("input", () => {
 $("#btn-clear-msg").addEventListener("click", clearMsg);
 
 /* ---------- decrypt handlers ---------- */
-["env-in"].forEach(id => $("#" + id).addEventListener("input", () => hideErr($("#dec-err"))));
+$("#env-in").addEventListener("input", () => {
+  hideErr($("#dec-err"));
+  clearStalePlain();
+});
+$("#dec-pass").addEventListener("input", () => hideErr($("#dec-err")));
 
 $("#btn-decrypt").addEventListener("click", async (e) => {
   const err = $("#dec-err"); hideErr(err);
@@ -1277,9 +1306,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
   if (!pass) return showErr(err, "Enter the passphrase.");
   clearFlash(btn);
   btn.disabled = true; btn.textContent = "Decrypting…";
-  $("#plain-out").hidden = true;
-  $("#btn-copy-plain").hidden = true;
-  $("#btn-clear-plain").hidden = true;
+  clearStalePlain();
   let scalar = null, ptBytes = null;
   try {
     parseEnv(env);
@@ -1300,7 +1327,7 @@ $("#btn-decrypt").addEventListener("click", async (e) => {
     ownPub.fill(0);
     if (scalar) scalar.fill(0);
     if (ptBytes) ptBytes.fill(0);
-    btn.disabled = false; btn.textContent = "Decrypt";
+    btn.disabled = !RECORD; btn.textContent = "Decrypt";
   }
 });
 
@@ -1317,6 +1344,17 @@ for (const b of $$("#tabs .tabbtn"))
   b.addEventListener("click", () => showTab(b.dataset.tab));
 
 (async function boot(){
+  const bail = (title, msg) => {
+    $("#ctx-warn-title").textContent = title;
+    $("#ctx-warn-msg").textContent = msg;
+    $("#ctx-warn").hidden = false;
+    for (const el of $$("main button, main input, main textarea, main select")) el.disabled = true;
+  };
+  if (typeof genKeyPair !== "function" || typeof checkRuntime !== "function"){
+    bail("Missing crypto.js.",
+      "crypto.js could not be loaded. Keep crypto.js in the same folder as index.html (do not use browser 'Save Page As — HTML Only'). Buttons are disabled.");
+    return;
+  }
   const rt = checkRuntime(navigator.userAgent, window);
   if (rt){
     $("#rt-warn-title").textContent = rt.kind === "webview"
@@ -1327,12 +1365,6 @@ for (const b of $$("#tabs .tabbtn"))
       : "Some third-party or OEM browsers include cloud content inspection or script injection. For sensitive use, open this page in standalone Firefox, Chrome, Edge, or Safari with browser extensions (such as Tampermonkey or translation plugins) disabled.";
     $("#rt-warn").hidden = false;
   }
-  const bail = (title, msg) => {
-    $("#ctx-warn-title").textContent = title;
-    $("#ctx-warn-msg").textContent = msg;
-    $("#ctx-warn").hidden = false;
-    for (const b of $$("main button")) b.disabled = true;
-  };
   if (!window.isSecureContext){
     bail("Web Crypto is unavailable here.",
       "This page only works in a secure context: served over HTTPS, from localhost, or opened as a local file (file://). Buttons are disabled.");

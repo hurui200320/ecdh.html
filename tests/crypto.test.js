@@ -31,7 +31,7 @@ const core = require("../crypto.js");
 const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI, EMOJI_NAMES,
         B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv, parseEnv,
-        genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
+        genKeyPair, importPriv, importPub, x25519, pubFromPriv, x25519Supported, encryptTo, decryptWith,
         wrapScalar, parseRecord, unwrapScalar, recordFromImport, contactsFromImport, fpOf, checkRuntime } = core;
 
 /* helper: build a wrapper record the way the app does */
@@ -56,6 +56,10 @@ async function makeRecord(priv, pub, pass, iter){
   assert.ok(nPubRaw.equals(Buffer.from(pub)), "OpenSSL public key must match the WebCrypto one");
 
   await assert.rejects(importPriv(new Uint8Array(16)), /32 bytes/, "short scalar must be rejected");
+  await assert.rejects(importPub(new Uint8Array(16)), /32 bytes/, "short public key must be rejected");
+  await assert.rejects(x25519(new Uint8Array(16), pub), /32 bytes/, "x25519 rejects short scalar before deriveBits");
+  await assert.rejects(x25519(priv, new Uint8Array(16)), /32 bytes/, "x25519 rejects short public key before deriveBits");
+  await assert.rejects(encryptTo(new Uint8Array(16), new Uint8Array(4)), /32 bytes/, "encryptTo rejects short recipient key before deriveBits");
 
   /* 1b. public key string form: canonical lowercase hex, lenient whitespace */
   assert.ok(/^[0-9a-f]{64}$/.test(pubEnc(pub)), "pubEnc is 64 lowercase hex chars");
@@ -141,6 +145,14 @@ async function makeRecord(priv, pub, pass, iter){
     const s = z85enc(raw);
     assert.strictEqual(s, refZ85enc(raw), "matches the BigInt reference at length " + len);
     assert.ok(Buffer.from(z85dec(s)).equals(Buffer.from(raw)), "round-trip at length " + len);
+  }
+  for (const fill of [0x00, 0xff]){
+    for (let len = 1; len <= 8; len++){
+      const raw = new Uint8Array(len).fill(fill);
+      const s = z85enc(raw);
+      assert.strictEqual(s, refZ85enc(raw), "boundary fill " + fill + " matches reference at length " + len);
+      assert.ok(Buffer.from(z85dec(s)).equals(Buffer.from(raw)), "boundary fill " + fill + " round-trip at length " + len);
+    }
   }
   const bulk = new Uint8Array(nc.randomBytes(4096));
   assert.ok(Buffer.from(z85dec(z85enc(bulk))).equals(Buffer.from(bulk)), "4 KiB round-trip");
@@ -294,14 +306,14 @@ async function makeRecord(priv, pub, pass, iter){
   assert.ok(Buffer.from(await unwrapScalar("another pass", big)).equals(Buffer.from(priv)),
     "full-cost (800k) wrapper round-trip");
 
-  /* OpenSSL cross-check of the wrapper: PBKDF2 + AES-GCM unwrap */
-  {
-    const w = await wrapScalar("cross check", priv, 1500);
-    const k = nc.pbkdf2Sync("cross check", Buffer.from(w.salt), 1500, 32, "sha256");
+  /* OpenSSL cross-check of the wrapper: PBKDF2 (UTF-8 passphrase) + AES-GCM unwrap */
+  for (const pass of ["cross check", "口令 🔑 café"]){
+    const w = await wrapScalar(pass, priv, 1500);
+    const k = nc.pbkdf2Sync(Buffer.from(pass, "utf8"), Buffer.from(w.salt), 1500, 32, "sha256");
     const d = nc.createDecipheriv("aes-256-gcm", k, Buffer.from(w.iv));
     d.setAuthTag(Buffer.from(w.ct.slice(-16)));
     const pt = Buffer.concat([d.update(Buffer.from(w.ct.slice(0, -16))), d.final()]);
-    assert.ok(pt.equals(Buffer.from(priv)), "OpenSSL PBKDF2+GCM unwrap must match");
+    assert.ok(pt.equals(Buffer.from(priv)), "OpenSSL PBKDF2+GCM unwrap must match for passphrase: " + pass);
   }
 
   /* 7. import validation: pub required, verified, record canonicalized (hex) */

@@ -277,7 +277,8 @@ async function genKeyPair(){
   const pub = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
   const pk8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", kp.privateKey));
   try {
-    if (pk8.length !== 48) throw new Error("Unexpected private key encoding.");
+    if (pk8.length !== 48 || !PKCS8_X25519.every((b, i) => pk8[i] === b))
+      throw new Error("Unexpected private key encoding.");
     return { priv: pk8.slice(16), pub };
   } finally { pk8.fill(0); }
 }
@@ -294,11 +295,12 @@ async function importPub(raw){
   return crypto.subtle.importKey("raw", raw, { name: "X25519" }, false, []);
 }
 async function x25519(privScalar, peerPubRaw){
+  const pubKey = await importPub(peerPubRaw);
+  const privKey = await importPriv(privScalar);
   let out;
   try {
     out = new Uint8Array(await crypto.subtle.deriveBits(
-      { name: "X25519", public: await importPub(peerPubRaw) },
-      await importPriv(privScalar), 256));
+      { name: "X25519", public: pubKey }, privKey, 256));
   } catch {
     // Some backends (e.g. Chromium) reject small-order/invalid points with an
     // empty error; Firefox returns an all-zero secret instead (caught below).
@@ -367,6 +369,7 @@ function parseEnv(envStr){
 async function encryptTo(recipPubRaw, plaintext){
   if (!(plaintext instanceof Uint8Array))
     throw new Error("Plaintext must be raw bytes (Uint8Array) — encode text with TE.encode().");
+  const recipKey = await importPub(recipPubRaw);
   // Ephemeral keypair stays non-extractable inside WebCrypto: the private
   // scalar is never exported, imported, or visible to page script.
   const kp = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
@@ -375,7 +378,7 @@ async function encryptTo(recipPubRaw, plaintext){
   try {
     try {
       ss = new Uint8Array(await crypto.subtle.deriveBits(
-        { name: "X25519", public: await importPub(recipPubRaw) }, kp.privateKey, 256));
+        { name: "X25519", public: recipKey }, kp.privateKey, 256));
     } catch {
       // Same small-order/invalid-point quirk as x25519() above.
       throw new Error("Key agreement failed — invalid key material (backend rejected a key, or all-zero shared secret).");
