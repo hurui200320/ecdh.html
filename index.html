@@ -73,6 +73,9 @@
     width:100%; padding:12px 14px; font-size:1rem; color:var(--ink);
     background:var(--bg); border:1px solid var(--line); border-radius:10px;
   }
+  .codec-row{ display:flex; align-items:center; gap:12px; margin:.6rem 0 .2rem; }
+  .codec-row label{ margin:0; white-space:nowrap; }
+  .codec-row select{ flex:1; width:auto; min-width:0; }
   details{ border-top:1px solid var(--line); margin-top:14px; padding-top:10px; }
   summary{ cursor:pointer; font-weight:600; font-size:.9rem; padding:6px 0; }
   footer{ color:var(--muted); font-size:.75rem; text-align:center; margin-top:28px; }
@@ -215,6 +218,13 @@
     <h2>Compose</h2>
     <p class="hint">Each message uses a fresh one-time keypair generated right now, embedded in the envelope, and then discarded. You keep nothing on this device by sending.</p>
     <textarea id="msg" rows="7" placeholder="Message to encrypt…"></textarea>
+    <div class="codec-row">
+      <label for="codec-sel">Output format</label>
+      <select id="codec-sel" aria-label="Envelope text encoding">
+        <option value="賒" selected>CJK base4096 (賒) — dense, reads as classical text</option>
+        <option value="A">Z85 (A) — compact ASCII</option>
+      </select>
+    </div>
     <button id="btn-encrypt" class="primary" type="button">Encrypt</button>
     <textarea id="env-out" rows="4" readonly hidden></textarea>
     <button id="btn-copy-env" type="button" hidden>Copy envelope</button>
@@ -229,7 +239,7 @@
     <h2>Decrypt a message</h2>
     <p class="hint">Paste the envelope, enter the passphrase of your stored key. Decrypted text is shown, never stored — copy or clear it.</p>
     <p id="dec-nokey" class="warn" hidden>No identity on this device yet — create or restore one in the Setup tab first.</p>
-    <textarea id="env-in" rows="4" placeholder="Paste envelope (Z85)… line-wraps are fine"></textarea>
+    <textarea id="env-in" rows="4" placeholder="Paste envelope (CJK base4096 or Z85)… line-wraps are fine"></textarea>
     <label for="dec-pass">Passphrase</label>
     <input type="password" id="dec-pass" autocomplete="off">
     <button id="btn-decrypt" class="primary" type="button">Decrypt</button>
@@ -244,7 +254,7 @@
 <section id="sec-help" class="help" hidden>
   <div class="card">
     <h2>What this is</h2>
-    <p class="hint">A static page for emergency encrypted text (X25519 ECIES + AES-256-GCM). You host it; friends exchange Z85 envelopes over any channel — tapped, monitored, hostile. The channel just carries opaque blobs.</p>
+    <p class="hint">A static page for emergency encrypted text (X25519 ECIES + AES-256-GCM). You host it; friends exchange tagged envelopes (CJK base4096 or Z85) over any channel — tapped, monitored, hostile. The channel just carries opaque blobs.</p>
     <p class="hint">Full protocol spec and the pinned threat model: see <code>README.md</code> in the repo.</p>
   </div>
   <div class="card">
@@ -298,7 +308,8 @@
 /* =====================================================================
  * ecdh.html v1 — UI layer. The DOM-free crypto core lives in crypto.js
  * (loaded above); tests/crypto.test.js exercises that file directly.
- * Protocol: envelope text = "A" || Z85(0x01 | ephPub[32] | iv[12] | AESGCM ct||tag)
+ * Protocol: envelope text = TAG || codec(0x01 | ephPub[32] | iv[12] | AESGCM ct||tag)
+ *           tags: "A" = Z85, "賒" = base4096 (CJK digits — the UI default)
  *           key = HKDF-SHA256(X25519(eph, recip), salt=ephPub||recipPub,
  *                              info="ecdh.html/v1", 32)
  * Public keys are hex strings (64 chars, 0-9a-f); see pubEnc/pubDec in crypto.js.
@@ -628,7 +639,8 @@ $("#btn-encrypt").addEventListener("click", async (e) => {
   $("#btn-clear-msg").hidden = true;
   btn.disabled = true; btn.textContent = "Encrypting…";
   try {
-    const env = encodeEnv(await encryptTo(pub, TE.encode($("#msg").value)));
+    const env = encodeEnv(await encryptTo(pub, TE.encode($("#msg").value)),
+      $("#codec-sel").value);
     $("#env-out").value = env;
     $("#env-out").hidden = false;
     $("#btn-copy-env").hidden = false;

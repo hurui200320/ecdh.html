@@ -16,8 +16,8 @@ AES-256-GCM. Browsers do all of it natively via Web Crypto.
 **Designed use case:** the trusted channel dies (for example, server get blocked).
 You and your friends still have *some* internet — an IM, an email, a pastebin —
 but assume that channel is tapped, stored, and actively rewritable. This tool
-turns that channel back into a confidential one by moving tagged Z85
-envelopes and hex public keys through it. Nothing else.
+turns that channel back into a confidential one by moving tagged envelopes
+(base4096 CJK or Z85) and hex public keys through it. Nothing else.
 
 > Special note: This system need another hard to tamper channel to setup.
 > It's recommended to setup and share the keys over a trusted channel,
@@ -148,9 +148,8 @@ text form = TAG || codec( 0x01 | ephPub[32] | iv[12] | ciphertext )
 ```
 
 - `TAG` — one char naming the text encoding, so the decoder can tell at a
-  glance how to parse the rest. Today: `A` = Z85 (spec below). Planned: a CJK
-  tag for base4096 picked from the
-  same visual class as its charset so the whole string blends in. Tags match
+  glance how to parse the rest. Today: `A` = Z85 and `賒` = base4096 (specs
+  below; the UI defaults to `賒`). Tags match
   strictly (case-sensitive, no untagged fallback) and are **orthogonal to the
   version byte**: the tag says how the bytes are spelled, `0x01` inside says
   what they mean.
@@ -204,6 +203,45 @@ classic Ascii85's `"` `'` `\` range:
 Spec vector (from the ZeroMQ Z85 definition): the bytes
 `86 4F D2 6F B5 59 F7 5B` encode to `HelloWorld`. Tail vectors: byte `01`
 encodes to `0r`, bytes `01 02` to `0rJ`, bytes `01 02 03` to `0rJu`.
+
+### Envelope text encoding: base4096 (tag 賒)
+
+Tag `賒` wraps the envelope bytes in **base4096** — 12 bits per CJK character,
+3 bytes → 2 chars (0.68 chars/byte, ~1.9× denser than Z85). The point is the
+channel, not density: every digit is an archaic nature/object-radical hanzi,
+so an envelope reads as harmless classical-looking text, and **no common
+Chinese vocabulary — sensitive or otherwise — can be spelled in it**, leaving
+IM keyword filters nothing to match.
+
+- **Digit set:** 4,096 characters, pinned verbatim as `B4096_TABLE` in
+  `crypto.js` (that constant is the source of truth), strictly ascending from
+  U+4E62 to U+8CCF. Every digit sits in the BMP CJK block and predates
+  Unicode 5.1, so system CJK fonts render it everywhere.
+- **How the set was chosen** (deterministic, auditable):
+  Unicode 18.0 `kRSUnicode` radical whitelist — the 47 nature/object radicals
+  土山木水牛田石竹糸羊羽艸虫角谷豆豕豸貝車酉里金長門阜隹雨青非面革韋韭音頁風飛食首香馬魚鳥鹿龍龜
+  — then drop every GB2312-encodable character and every character of the
+  《现代汉语常用字表》(3500) / 《现代汉语通用字表》(7000), then order by
+  codepoint. The first 4,096 are the digits; the next three are the control
+  chars `PAD1 賐` (U+8CD0), `PAD2 賑` (U+8CD1), tag `賒` (U+8CD2). A residual
+  handful of rare traditional characters survives by design (e.g. 賄賂 could
+  in principle appear by chance with probability ≈ 1/100,000 per message).
+- **Groups:** each 3-byte group is read **big-endian** into a 24-bit value,
+  written as 2 base-4096 digits, **most significant first**.
+- **Tails:** a 1-byte tail is one digit (byte << 4) followed by `PAD1`; a
+  2-byte tail is two digits (16 data bits in a 24-bit slot) followed by
+  `PAD2`. The trailing `PAD` marker tells the decoder the tail size — this
+  removes the ambiguity a bare length cannot (2 tail chars are
+  indistinguishable from one full group). An envelope never ends in a bare
+  digit run of odd length.
+- **Strictness:** any character outside the table (including a `PAD` marker
+  in the middle), any length that does not fit a whole number of groups plus
+  a marked tail, and any nonzero padding bits in a tail are rejected —
+  encoders emit one canonical compact form; decoders strip whitespace first,
+  so IM line-wraps survive.
+
+Spec vectors: bytes `01 02 03` encode to `圼嶖`; tail vectors: byte `01` →
+`圼賐`, bytes `01 02` → `圼嶒賑`.
 
 ### Key derivation
 
@@ -359,12 +397,15 @@ node tests/crypto.test.js
 ```
 
 Loads `crypto.js` (the DOM-free crypto core the page loads) and verifies the DER
-prefixes, envelope layout and the tag-dispatch text layer, HKDF derivation,
+prefixes, envelope layout and the tag-dispatch text layer (Z85 and base4096),
+HKDF derivation,
 PBKDF2 wrapper, and emoji fingerprints against Node's independent OpenSSL
 implementation (the same operations as the BouncyCastle recipe above), plus the
 documented failure paths: zero shared secret, tampered ciphertext, wrong
 version byte, unknown/missing tags, truncated/garbage input, wrong passphrase,
-inconsistent records.
+inconsistent records, non-canonical base4096 tails, and the base4096 charset
+property (no char of any common sensitive word, simplified or traditional, is
+a table digit).
 
 Validated in headless Chromium via Playwright:
 
@@ -412,6 +453,7 @@ cache on your actual host. Everything else works regardless.
 
 ---
 
-*Spec versions in play: envelope `0x01`, text-form tag `A` (Z85), wrapper
+*Spec versions in play: envelope `0x01`, text-form tags `A` (Z85) and `賒`
+(base4096), wrapper
 `v:1`, storage keys `.v1`, SW cache `v1`. Change any byte-level behavior = bump
 everything under it and document here.*

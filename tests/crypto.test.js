@@ -12,8 +12,8 @@
  *   - PBKDF2-HMAC-SHA256 passphrase wrapper (incl. the production 800k cost)
  *   - SHA-256 fingerprint and the 12-emoji (72-bit, LSB-first) mapping
  *   - import validation: pub required, verified, record canonicalized
- *   - envelope text layer: tag dispatch (A = Z85), IM whitespace
- *     tolerance, unknown/missing tags rejected
+ *   - envelope text layer: tag dispatch (A = Z85, 賒 = base4096), IM
+ *     whitespace tolerance, unknown/missing tags rejected
  *   - documented failure paths: zero shared secret, tampering, wrong
  *     version, truncated/garbage input, wrong passphrase, corrupt records
  *
@@ -28,6 +28,7 @@ const nc = require("node:crypto");
 const core = require("../crypto.js");
 
 const { b64enc, b64dec, z85enc, z85dec, pubEnc, pubDec, INFO, VER, PBKDF2_ITER, PKCS8_X25519, EMOJI,
+        B4096_TABLE, B4096_PAD1, B4096_PAD2, B4096_TAG, b4096enc, b4096dec,
         TE, TD, encodeEnv, decodeEnv,
         genKeyPair, importPriv, pubFromPriv, x25519Supported, encryptTo, decryptWith,
         wrapScalar, unwrapScalar, recordFromImport, fpOf } = core;
@@ -133,6 +134,64 @@ async function makeRecord(priv, pub, pass, iter){
   assert.ok(Buffer.from(z85dec(z85enc(bulk))).equals(Buffer.from(bulk)), "4 KiB round-trip");
   assert.ok(Buffer.from(decodeEnv("A" + z85enc(env).replace(/(.{20})/g, "$1 "))).equals(Buffer.from(env)),
     "Z85 tolerates stripped IM whitespace");
+
+  /* 2d. base4096 codec (tag 賒): table invariants, spec vectors, tails,
+   *     strictness, cross-codec equality */
+  assert.strictEqual(B4096_TABLE.length, 4096, "table has 4096 digits");
+  assert.strictEqual(new Set(B4096_TABLE).size, 4096, "digits are unique");
+  let bAsc = true;
+  for (let i = 1; i < 4096; i++)
+    if (B4096_TABLE.codePointAt(i) <= B4096_TABLE.codePointAt(i - 1)) bAsc = false;
+  assert.ok(bAsc, "digits strictly ascending by codepoint");
+  for (const ch of B4096_TABLE){
+    const cp = ch.codePointAt(0);
+    assert.ok(cp >= 0x4e00 && cp <= 0x9fa6, "digit inside the CJK BMP block");
+  }
+  const bCtrl = [B4096_PAD1, B4096_PAD2, B4096_TAG];
+  assert.strictEqual(new Set(bCtrl).size, 3, "PAD/TAG chars are distinct");
+  for (const ch of bCtrl)
+    assert.ok(!B4096_TABLE.includes(ch), "control char is not a digit: " + ch);
+  // Spec vectors (README documents the same): [01 02 03] -> 圼嶖; tails carry
+  // an explicit PAD marker: [01] -> 圼賐, [01 02] -> 圼嶒賑.
+  assert.strictEqual(b4096enc(new Uint8Array([0x01, 0x02, 0x03])), "圼嶖", "base4096 spec vector");
+  assert.strictEqual(b4096enc(new Uint8Array([0x01])), "圼賐", "1-byte tail = digit + PAD1");
+  assert.strictEqual(b4096enc(new Uint8Array([0x01, 0x02])), "圼嶒賑", "2-byte tail = 2 digits + PAD2");
+  assert.ok(Buffer.from(b4096dec("圼嶖")).equals(Buffer.from([1, 2, 3])), "vector decodes");
+  assert.strictEqual(b4096dec("").length, 0, "empty payload decodes empty");
+  // Round-trips across every tail shape plus bulk data.
+  for (const len of [0, 1, 2, 3, 4, 5, 44, 45, 46, 47, 160, 161, 162, 255, 4096]){
+    const raw = new Uint8Array(nc.randomBytes(len));
+    assert.ok(Buffer.from(b4096dec(b4096enc(raw))).equals(Buffer.from(raw)),
+      "base4096 round-trip at length " + len);
+  }
+  // Envelope-level: the 賒 tag dispatches to base4096 and whitespace survives.
+  const env4096 = encodeEnv(env, B4096_TAG);
+  assert.ok(env4096.startsWith(B4096_TAG), "envelope tagged 賒");
+  assert.ok(Buffer.from(decodeEnv(env4096.replace(/(.{20})/g, "$1\n"))).equals(Buffer.from(env)),
+    "base4096 tolerates stripped IM whitespace");
+  // The same envelope bytes through either codec decrypt to the same text.
+  assert.strictEqual(
+    TD.decode(await decryptWith(priv, pub, encodeEnv(env, "A"))),
+    TD.decode(await decryptWith(priv, pub, env4096)),
+    "Z85 and base4096 carry identical bytes");
+  // Strictness: bad lengths, stray PAD markers, non-canonical padding bits.
+  assert.throws(() => b4096dec("圼"), /length/i,
+    "odd digit count without a PAD marker is rejected");
+  assert.throws(() => b4096dec("圼賐圼嶖"), /alphabet/i,
+    "a PAD marker inside the payload is not a digit");
+  assert.throws(() => b4096dec(B4096_TABLE[17] + B4096_PAD1), /canonical/i,
+    "1-byte tail with padding bits set is rejected");
+  assert.throws(() => b4096dec(B4096_TABLE[16] + B4096_TABLE[255] + B4096_PAD2), /canonical/i,
+    "2-byte tail with padding bits set is rejected");
+  assert.throws(() => decodeEnv(B4096_TAG + "圼"), /base4096/i,
+    "decodeEnv wraps codec failures under the 賒 tag");
+  // Charset property: none of these common simplified/traditional sensitive
+  // words can be spelled with table digits (every char of each is excluded
+  // from the table by construction).
+  for (const w of ["共产党", "资本主义", "翻墙", "色情", "赌博", "毒品", "强奸", "炸弹",
+                   "選舉", "獨立", "輿論", "顛覆"])
+    for (const ch of w)
+      assert.ok(!B4096_TABLE.includes(ch), "table excludes chars of " + w);
 
   /* 3. independent OpenSSL decrypt of the envelope (spec recipe) */
   {
